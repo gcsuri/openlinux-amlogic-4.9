@@ -48,6 +48,7 @@ enum bl_chip_type_e {
 	BL_CHIP_TXLX,
 	BL_CHIP_AXG,
 	BL_CHIP_G12A,
+	BL_CHIP_G12B,
 	BL_CHIP_MAX,
 };
 
@@ -62,7 +63,7 @@ enum bl_ctrl_method_e {
 	BL_CTRL_GPIO = 0,
 	BL_CTRL_PWM,
 	BL_CTRL_PWM_COMBO,
-	BL_CTRL_LOCAL_DIMING,
+	BL_CTRL_LOCAL_DIMMING,
 	BL_CTRL_EXTERN,
 	BL_CTRL_MAX,
 };
@@ -148,13 +149,13 @@ struct bl_config_s {
 	unsigned int power_off_delay;
 	unsigned int dim_max;
 	unsigned int dim_min;
+	unsigned int en_sequence_reverse;
 
 	struct bl_pwm_config_s *bl_pwm;
 	struct bl_pwm_config_s *bl_pwm_combo0;
 	struct bl_pwm_config_s *bl_pwm_combo1;
 	unsigned int pwm_on_delay;
 	unsigned int pwm_off_delay;
-	unsigned int pwm_en_sequence_reverse;
 
 	struct bl_gpio_s bl_gpio[BL_GPIO_NUM_MAX];
 	struct pinctrl *pin;
@@ -180,6 +181,8 @@ struct aml_bl_drv_s {
 	struct backlight_device   *bldev;
 	struct workqueue_struct   *workqueue;
 	struct delayed_work       bl_delayed_work;
+	struct resource *res_ldim_irq;
+	struct resource *res_rdma_irq;
 };
 
 extern struct aml_bl_drv_s *aml_bl_get_driver(void);

@@ -159,6 +159,7 @@ struct tvafe_cvd2_s {
 	enum tvin_sig_fmt_e config_fmt;
 	enum tvin_sig_fmt_e manual_fmt;
 	bool cvd2_init_en;
+	bool nonstd_detect_dis;
 };
 
 /* ***************************************** */
@@ -182,6 +183,8 @@ extern void tvafe_cvd2_adj_cdto(struct tvafe_cvd2_s *cvd2,
 #endif
 extern void tvafe_cvd2_adj_hs(struct tvafe_cvd2_s *cvd2,
 			unsigned int hcnt64);
+extern void tvafe_cvd2_adj_hs_ntsc(struct tvafe_cvd2_s *cvd2,
+			unsigned int hcnt64);
 
 extern void tvafe_cvd2_set_default_cdto(struct tvafe_cvd2_s *cvd2);
 extern void tvafe_cvd2_set_default_de(struct tvafe_cvd2_s *cvd2);
@@ -191,7 +194,7 @@ extern enum tvafe_cvbs_video_e tvafe_cvd2_get_lock_status(
 			struct tvafe_cvd2_s *cvd2);
 extern int tvafe_cvd2_get_atv_format(void);
 extern int tvafe_cvd2_get_hv_lock(void);
-extern void tvafe_cvd2_hold_rst(struct tvafe_cvd2_s *cvd2);
+extern void tvafe_cvd2_hold_rst(void);
 extern void tvafe_cvd2_set_reg8a(unsigned int v);
 extern void tvafe_snow_config(unsigned int onoff);
 extern void tvafe_snow_config_clamp(unsigned int onoff);
@@ -201,6 +204,7 @@ extern enum tvin_aspect_ratio_e tvafe_cvd2_get_wss(void);
 extern void tvafe_cvd2_get_signal_status(struct tvafe_cvd2_s *cvd2);
 extern void cvd_vbi_mem_set(unsigned int offset, unsigned int size);
 extern void cvd_vbi_config(void);
+extern void tvafe_cvd2_rf_ntsc50_en(bool v);
 
 extern bool tvafe_snow_function_flag;
 

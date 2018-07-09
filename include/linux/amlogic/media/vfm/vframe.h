@@ -49,6 +49,8 @@
 #define DISP_RATIO_FORCECONFIG          0x80000000
 #define DISP_RATIO_FORCE_NORMALWIDE     0x40000000
 #define DISP_RATIO_FORCE_FULL_STRETCH   0x20000000
+#define DISP_RATIO_ADAPTED_PICMODE   0x10000000
+#define DISP_RATIO_INFOFRAME_AVAIL   0x08000000
 #define DISP_RATIO_CTRL_MASK            0x00000003
 #define DISP_RATIO_NO_KEEPRATIO         0x00000000
 #define DISP_RATIO_KEEPRATIO            0x00000001
@@ -72,6 +74,7 @@
 #define VFRAME_FLAG_HIGH_BANDWIDTH	4
 #define VFRAME_FLAG_ERROR_RECOVERY		8
 #define VFRAME_FLAG_SYNCFRAME			0x10
+#define VFRAME_FLAG_GAME_MODE		0x20
 
 enum pixel_aspect_ratio_e {
 	PIXEL_ASPECT_RATIO_1_1,
@@ -137,6 +140,8 @@ struct vframe_view_s {
 	unsigned int height;
 } /*vframe_view_t */;
 
+#define SEI_PicTiming         1
+#define SEI_MasteringDisplayColorVolume 137
 #define SEI_ContentLightLevel 144
 struct vframe_content_light_level_s {
 	u32 present_flag;
@@ -144,7 +149,6 @@ struct vframe_content_light_level_s {
 	u32 max_pic_average;
 }; /* content_light_level from SEI */
 
-#define SEI_MasteringDisplayColorVolume 137
 struct vframe_master_display_colour_s {
 	u32 present_flag;
 	u32 primaries[3][2];
@@ -205,6 +209,16 @@ enum vframe_disp_mode_e {
 	VFRAME_DISP_MODE_OK,
 };
 
+struct vframe_pic_mode_s {
+	int hs;
+	int he;
+	int vs;
+	int ve;
+	u32 screen_mode;
+	u32 custom_ar;
+	u32 AFD_enable;
+};
+
 #define BITDEPTH_Y_SHIFT 8
 #define BITDEPTH_Y8    (0 << BITDEPTH_Y_SHIFT)
 #define BITDEPTH_Y9    (1 << BITDEPTH_Y_SHIFT)
@@ -238,6 +252,8 @@ struct vframe_s {
 	u32 duration_pulldown;
 	u32 pts;
 	u64 pts_us64;
+	bool next_vf_pts_valid;
+	u32 next_vf_pts;
 	u32 disp_pts;
 	u64 disp_pts_us64;
 	u32 flag;
@@ -309,6 +325,8 @@ struct vframe_s {
 	/* pixel aspect ratio */
 	enum pixel_aspect_ratio_e pixel_ratio;
 	u64 ready_jiffies64;	/* ready from decode on  jiffies_64 */
+	long long ready_clock[5];/*ns*/
+	long long ready_clock_hist[2];/*ns*/
 	atomic_t use_cnt;
 	u32 frame_dirty;
 	/*
@@ -327,6 +345,7 @@ struct vframe_s {
 	void *mem_handle;
 	/*for MMU H265/VP9 compress header*/
 	void *mem_head_handle;
+	struct vframe_pic_mode_s pic_mode;
 } /*vframe_t */;
 
 #if 0

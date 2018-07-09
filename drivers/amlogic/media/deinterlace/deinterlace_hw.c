@@ -21,6 +21,7 @@
 #include <linux/workqueue.h>
 #include <linux/platform_device.h>
 #include <linux/module.h>
+#include <linux/atomic.h>
 
 #include <linux/amlogic/media/vpu/vpu.h>
 #include <linux/amlogic/cpu_version.h>
@@ -29,6 +30,7 @@
 #include <linux/amlogic/media/vfm/vframe_provider.h>
 #include "deinterlace_hw.h"
 #include "register.h"
+#include "register_nr4.h"
 #ifdef DET3D
 #include "detect3d.h"
 #endif
@@ -56,9 +58,7 @@ static unsigned int pq_load_dbg;
 module_param_named(pq_load_dbg, pq_load_dbg, uint, 0644);
 
 static bool pd22_flg_calc_en = true;
-#ifdef DEBUG_SUPPORT
-module_param_named(pd22_flg_calc_en, pd22_flg_calc_en, bool, 0644);
-#endif
+static unsigned int ctrl_regs[SKIP_CTRE_NUM];
 
 #ifdef CONFIG_AMLOGIC_MEDIA_VSYNC_RDMA
 extern u32 VSYNC_RD_MPEG_REG(u32 adr);
@@ -134,7 +134,11 @@ static void ma_di_init(void)
 	DI_Wr(DI_MTN_1_CTRL4, 0x01800880);
 	DI_Wr(DI_MTN_1_CTRL7, 0x0a800480);
 	/* mtn setting */
-	DI_Wr(DI_MTN_1_CTRL1, 0xa0202015);
+	if (cpu_after_eq(MESON_CPU_MAJOR_ID_G12B)) {
+		DI_Wr_reg_bits(DI_MTN_CTRL, 1, 0, 1);
+		DI_Wr(DI_MTN_1_CTRL1, 0x202015);
+	} else
+		DI_Wr(DI_MTN_1_CTRL1, 0xa0202015);
 	/* invert chan2 field num */
 	DI_Wr(DI_MTN_CTRL1, (1 << 17) | 2);
 		/* no invert chan2 field num from gxlx*/
@@ -421,14 +425,33 @@ static void pre_hold_block_mode_config(void)
 		DI_Wr(DI_PRE_HOLD, (1 << 31) | (31 << 16) | 31);
 	}
 }
-
+/*
+ * ctrl or size related regs configured
+ * in software base on real size and condition
+ */
+static void set_skip_ctrl_size_regs(void)
+{
+	ctrl_regs[0] = DI_CLKG_CTRL;
+	ctrl_regs[1] = DI_MTN_1_CTRL1;
+	ctrl_regs[2] = MCDI_MOTINEN;
+	ctrl_regs[3] = MCDI_CTRL_MODE;
+	ctrl_regs[4] = MCDI_MC_CRTL;
+	ctrl_regs[5] = MCDI_PD_22_CHK_WND0_X;
+	ctrl_regs[6] = MCDI_PD_22_CHK_WND0_Y;
+	ctrl_regs[7] = MCDI_PD_22_CHK_WND1_X;
+	ctrl_regs[8] = MCDI_PD_22_CHK_WND1_Y;
+	ctrl_regs[9] = NR4_MCNR_LUMA_STAT_LIMTX;
+	ctrl_regs[10] = NR4_MCNR_LUMA_STAT_LIMTY;
+	ctrl_regs[11] = NR4_NM_X_CFG;
+	ctrl_regs[12] = NR4_NM_Y_CFG;
+}
 void di_hw_init(bool pd_enable, bool mc_enable)
 {
 	unsigned short fifo_size_vpp = 0xc0;
 	unsigned short fifo_size_di = 0xc0;
 	switch_vpu_clk_gate_vmod(VPU_VPU_CLKB, VPU_CLK_GATE_ON);
 	if (is_meson_txlx_cpu() || is_meson_txhd_cpu()
-		|| is_meson_g12a_cpu())
+		|| is_meson_g12a_cpu() || is_meson_g12b_cpu())
 		di_top_gate_control(true, true);
 	else if (is_meson_gxl_cpu()	|| is_meson_gxm_cpu()
 		|| is_meson_gxlx_cpu())
@@ -438,7 +461,9 @@ void di_hw_init(bool pd_enable, bool mc_enable)
 
 	if (is_meson_txlx_cpu() ||
 		is_meson_gxlx_cpu() ||
-		is_meson_txhd_cpu() || is_meson_g12a_cpu()) {
+		is_meson_txhd_cpu() ||
+		is_meson_g12a_cpu() ||
+		is_meson_g12b_cpu()) {
 		/* vpp fifo max size on txl :128*3=384[0x180] */
 		/* di fifo max size on txl :96*3=288[0x120] */
 		fifo_size_vpp = 0x180;
@@ -467,13 +492,15 @@ void di_hw_init(bool pd_enable, bool mc_enable)
 	}
 	/* 17b3 is DI_chan2_luma_fifo_size */
 	if (is_meson_txlx_cpu() ||
-		is_meson_txhd_cpu() || is_meson_g12a_cpu()) {
+		is_meson_txhd_cpu() ||
+		is_meson_g12a_cpu() ||
+		is_meson_g12b_cpu()) {
 		di_pre_gate_control(true, true);
 		di_post_gate_control(true);
 	}
 
 	pre_hold_block_mode_config();
-
+	set_skip_ctrl_size_regs();
 	ma_di_init();
 	ei_hw_init();
 	nr_hw_init();
@@ -483,7 +510,9 @@ void di_hw_init(bool pd_enable, bool mc_enable)
 	if (mc_enable)
 		mc_di_param_init();
 	if (is_meson_txlx_cpu() ||
-		is_meson_txhd_cpu() || is_meson_g12a_cpu()) {
+		is_meson_txhd_cpu() ||
+		is_meson_g12a_cpu() ||
+		is_meson_g12b_cpu()) {
 		di_pre_gate_control(false, true);
 		di_post_gate_control(false);
 		di_top_gate_control(false, false);
@@ -674,7 +703,10 @@ void enable_di_pre_aml(
 	/*
 	 * enable&disable contwr txt
 	 */
-	RDMA_WR_BITS(DI_MTN_1_CTRL1, madi_en?5:0, 29, 3);
+	if (cpu_after_eq(MESON_CPU_MAJOR_ID_G12B))
+		RDMA_WR_BITS(DI_MTN_CTRL, madi_en?5:0, 29, 3);
+	else
+		RDMA_WR_BITS(DI_MTN_1_CTRL1, madi_en?5:0, 29, 3);
 
 	if (cpu_after_eq(MESON_CPU_MAJOR_ID_G12A)) {
 		if (madi_en) {
@@ -701,7 +733,7 @@ void enable_di_pre_aml(
 	/* chan 2 enable for 2:2 pull down check.*/
 		((chan2_disable ? 0 : 1) << 9) |/* line buffer 2 enable */
 				(0 << 10) |	/* pre drop first. */
-				(1 << 11) | /* mem enable */
+				(1 << 11) | /* nrds mif enable */
 				(0 << 12) | /* pre viu link */
 			(pre_vdin_link << 13) |
 			(pre_vdin_link << 14) |/* pre go line link */
@@ -1077,7 +1109,7 @@ static void set_di_inp_mif(struct DI_MIF_s *mif, int urgent, int hold_line)
 	/* ---------------------- */
 	/* General register */
 	/* ---------------------- */
-	reset_on_gofield = 0;
+	reset_on_gofield = 1;/* default enable according to vlsi */
 	RDMA_WR(DI_INP_GEN_REG, (reset_on_gofield << 29) |
 				(urgent << 28)	|/* chroma urgent bit */
 				(urgent << 27)	|/* luma urgent bit. */
@@ -1287,7 +1319,7 @@ static void set_di_mem_mif(struct DI_MIF_s *mif, int urgent, int hold_line)
 	/* ---------------------- */
 	/* General register */
 	/* ---------------------- */
-	reset_on_gofield = 0;
+	reset_on_gofield = 1;/* default enable according to vlsi */
 	RDMA_WR(DI_MEM_GEN_REG, (reset_on_gofield << 29) |
 						/* reset on go field */
 				(urgent << 28)	| /* urgent bit. */
@@ -1501,7 +1533,7 @@ static void set_di_if2_mif(struct DI_MIF_s *mif, int urgent,
 	/* General register */
 	/* ---------------------- */
 
-	DI_VSYNC_WR_MPEG_REG(DI_IF2_GEN_REG, (0 << 29) | /* reset on go field */
+	DI_VSYNC_WR_MPEG_REG(DI_IF2_GEN_REG, (1 << 29) | /* reset on go field */
 			(urgent << 28)	|/* urgent */
 			(urgent << 27)	|/* luma urgent */
 			(1 << 25)|/* no dummy data. */
@@ -1601,7 +1633,7 @@ static void set_di_if1_mif(struct DI_MIF_s *mif, int urgent,
 	/* General register */
 	/* ---------------------- */
 
-	DI_VSYNC_WR_MPEG_REG(DI_IF1_GEN_REG, (0 << 29) | /* reset on go field */
+	DI_VSYNC_WR_MPEG_REG(DI_IF1_GEN_REG, (1 << 29) | /* reset on go field */
 			(urgent << 28)	|/* urgent */
 			(urgent << 27)	|/* luma urgent */
 			(1 << 25)|/* no dummy data. */
@@ -1724,7 +1756,7 @@ static void set_di_chan2_mif(struct DI_MIF_s *mif, int urgent, int hold_line)
 	/* ---------------------- */
 	/* General register */
 	/* ---------------------- */
-	reset_on_gofield = 0;
+	reset_on_gofield = 1;/* default enable according to vlsi */
 	RDMA_WR(DI_CHAN2_GEN_REG, (reset_on_gofield << 29) |
 				(urgent << 28) | /* urgent */
 				(urgent << 27) | /* luma urgent */
@@ -1831,7 +1863,7 @@ static void set_di_if0_mif(struct DI_MIF_s *mif, int urgent, int hold_line,
 			mif->set_separate_en ? 0 : (mif->video_mode ? 2 : 1);
 		demux_mode = mif->video_mode;
 		DI_VSYNC_WR_MPEG_REG(VD1_IF0_GEN_REG,
-(0 << 29) | /* reset on go field */
+(1 << 29) | /* reset on go field */
 (urgent << 28)		|	/* urgent */
 (urgent << 27)		|	/* luma urgent */
 (1 << 25)		|	/* no dummy data. */
@@ -1961,7 +1993,7 @@ static void set_di_if0_mif_g12(struct DI_MIF_s *mif, int urgent, int hold_line,
 			mif->set_separate_en ? 0 : (mif->video_mode ? 2 : 1);
 		demux_mode = mif->video_mode;
 		DI_VSYNC_WR_MPEG_REG(DI_IF0_GEN_REG,
-(0 << 29) | /* reset on go field */
+(1 << 29) | /* reset on go field */
 (urgent << 28)		|	/* urgent */
 (urgent << 27)		|	/* luma urgent */
 (1 << 25)		|	/* no dummy data. */
@@ -2333,14 +2365,9 @@ void enable_di_post_2(
 	}
 
 	set_di_if1_mif(di_buf1_mif, di_vpp_en, hold_line, vskip_cnt);
-	if (cpu_after_eq(MESON_CPU_MAJOR_ID_TXL)) {
-		if (blend_en) {
-			set_di_if2_mif(di_buf2_mif,
-				di_vpp_en, hold_line, vskip_cnt);
-		} else {
-			DI_VSYNC_WR_MPEG_REG(DI_IF2_GEN_REG, 0);
-		}
-	}
+	if (cpu_after_eq(MESON_CPU_MAJOR_ID_TXL))
+		set_di_if2_mif(di_buf2_mif,
+			di_vpp_en, hold_line, vskip_cnt);
 	/* motion for current display field. */
 	if (cpu_after_eq(MESON_CPU_MAJOR_ID_G12A))
 		set_post_mtnrd_mif_g12(di_mtnprd_mif);
@@ -2474,15 +2501,14 @@ void di_hw_disable(bool mc_enable)
 	enable_di_pre_mif(false, mc_enable);
 	DI_Wr(DI_POST_SIZE, (32-1) | ((128-1) << 16));
 	DI_Wr_reg_bits(DI_IF1_GEN_REG, 0, 0, 1);
-	if (cpu_after_eq(MESON_CPU_MAJOR_ID_TXL)) {
+	if (cpu_after_eq(MESON_CPU_MAJOR_ID_TXL))
 		DI_Wr_reg_bits(DI_IF2_GEN_REG, 0, 0, 1);
-		/* disable ma,enable if0 to vpp,enable afbc to vpp */
-		if (!cpu_after_eq(MESON_CPU_MAJOR_ID_G12A)) {
-			if (Rd_reg_bits(VIU_MISC_CTRL0, 16, 4) != 0)
-				DI_Wr_reg_bits(VIU_MISC_CTRL0, 0, 16, 4);
-			/* DI inp(current data) switch to memory */
-			DI_Wr_reg_bits(VIUB_MISC_CTRL0, 0, 16, 1);
-		}
+	/* disable ma,enable if0 to vpp,enable afbc to vpp */
+	if (!cpu_after_eq(MESON_CPU_MAJOR_ID_G12A)) {
+		if (Rd_reg_bits(VIU_MISC_CTRL0, 16, 4) != 0)
+			DI_Wr_reg_bits(VIU_MISC_CTRL0, 0, 16, 4);
+		/* DI inp(current data) switch to memory */
+		DI_Wr_reg_bits(VIUB_MISC_CTRL0, 0, 16, 1);
 	}
 }
 /*
@@ -2568,10 +2594,11 @@ void pulldown_info_clear_g12a(void)
 }
 
 /*
- * frame reset for pre which have nothing with encoder
- * go field
+ * manual reset contrd, cont2rd, mcinford mif
+ * which fix after g12a
  */
-void pre_frame_reset_g12a(unsigned char madi_en, unsigned char mcdi_en)
+static void reset_pre_simple_rd_mif_g12(unsigned char madi_en,
+	unsigned char mcdi_en)
 {
 	unsigned int reg_val = 0;
 
@@ -2589,17 +2616,36 @@ void pre_frame_reset_g12a(unsigned char madi_en, unsigned char mcdi_en)
 		RDMA_WR_BITS(CONTRD_CTRL2, 0, 31, 1);
 		RDMA_WR_BITS(CONT2RD_CTRL2, 0, 31, 1);
 		RDMA_WR_BITS(MCINFRD_CTRL2, 0, 31, 1);
-		/* reset simple mif which framereset not cover */
-		RDMA_WR_BITS(CONTWR_CAN_SIZE, 1, 14, 1);
-		RDMA_WR_BITS(MTNWR_CAN_SIZE, 1, 14, 1);
-		RDMA_WR_BITS(MCVECWR_CAN_SIZE, 1, 14, 1);
-		RDMA_WR_BITS(MCINFWR_CAN_SIZE, 1, 14, 1);
-
-		RDMA_WR_BITS(CONTWR_CAN_SIZE, 0, 14, 1);
-		RDMA_WR_BITS(MTNWR_CAN_SIZE, 0, 14, 1);
-		RDMA_WR_BITS(MCVECWR_CAN_SIZE, 0, 14, 1);
-		RDMA_WR_BITS(MCINFWR_CAN_SIZE, 0, 14, 1);
 	}
+}
+/*
+ * frame reset for pre which have nothing with encoder
+ * go field
+ */
+void pre_frame_reset_g12a(unsigned char madi_en,
+	unsigned char mcdi_en)
+{
+	unsigned int reg_val = 0;
+
+	if (cpu_after_eq(MESON_CPU_MAJOR_ID_G12B))
+		reset_pre_simple_rd_mif_g12(madi_en, mcdi_en);
+	else {
+		if (madi_en)
+			reg_val |= (1<<25);
+		if (mcdi_en)
+			reg_val |= (1<<10);
+		RDMA_WR(DI_PRE_CTRL, reg_val);
+	}
+	/* reset simple mif which framereset not cover */
+	RDMA_WR_BITS(CONTWR_CAN_SIZE, 1, 14, 1);
+	RDMA_WR_BITS(MTNWR_CAN_SIZE, 1, 14, 1);
+	RDMA_WR_BITS(MCVECWR_CAN_SIZE, 1, 14, 1);
+	RDMA_WR_BITS(MCINFWR_CAN_SIZE, 1, 14, 1);
+
+	RDMA_WR_BITS(CONTWR_CAN_SIZE, 0, 14, 1);
+	RDMA_WR_BITS(MTNWR_CAN_SIZE, 0, 14, 1);
+	RDMA_WR_BITS(MCVECWR_CAN_SIZE, 0, 14, 1);
+	RDMA_WR_BITS(MCINFWR_CAN_SIZE, 0, 14, 1);
 
 	reg_val = 0xc3200000 | line_num_pre_frst;
 	RDMA_WR(DI_PRE_GL_CTRL, reg_val);
@@ -2765,9 +2811,9 @@ void di_pre_gate_control(bool gate, bool mc_enable)
 		/* enable mc clk */
 		DI_Wr_reg_bits(VIUB_GCLK_CTRL0, 1, 11, 1);
 		/* enable pd clk gate */
-		DI_Wr_reg_bits(VIUB_GCLK_CTRL2, 0, 2, 2);
+		DI_Wr_reg_bits(VIUB_GCLK_CTRL2, 2, 2, 2);
 		/* enable motion clk gate */
-		DI_Wr_reg_bits(VIUB_GCLK_CTRL2, 0, 4, 2);
+		DI_Wr_reg_bits(VIUB_GCLK_CTRL2, 2, 4, 2);
 		/* enable deband clk gate freerun for hw issue */
 		DI_Wr_reg_bits(VIUB_GCLK_CTRL2, 2, 6, 2);
 		/* enable input mif external gate */
@@ -2954,10 +3000,16 @@ static void di_pre_data_mif_ctrl(bool enable)
 }
 
 static bool pre_mif_gate;
+static atomic_t mif_flag;
 void enable_di_pre_mif(bool en, bool mc_enable)
 {
+	if (atomic_read(&mif_flag))
+		return;
+
 	if (pre_mif_gate && !en)
 		return;
+	atomic_set(&mif_flag, 1);
+
 	if (cpu_after_eq(MESON_CPU_MAJOR_ID_G12A)) {
 		if (mc_enable)
 			mc_pre_mif_ctrl_g12(en);
@@ -2968,6 +3020,7 @@ void enable_di_pre_mif(bool en, bool mc_enable)
 		ma_pre_mif_ctrl(en);
 	}
 	di_pre_data_mif_ctrl(en);
+	atomic_set(&mif_flag, 0);
 }
 
 void combing_pd22_window_config(unsigned int width, unsigned int height)
@@ -2992,7 +3045,6 @@ void combing_pd22_window_config(unsigned int width, unsigned int height)
 	DI_Wr_reg_bits(MCDI_PD_22_CHK_WND0_X, (width-1), 16, 13);/* pd22 x1 */
 	DI_Wr_reg_bits(MCDI_PD_22_CHK_WND0_Y, 0, 0, 13);/* pd22 y0 */
 	DI_Wr_reg_bits(MCDI_PD_22_CHK_WND0_Y, y1, 16, 13);/* pd y1 */
-
 	DI_Wr_reg_bits(MCDI_PD_22_CHK_WND1_X, 0, 0, 13);/* pd x0 */
 	DI_Wr_reg_bits(MCDI_PD_22_CHK_WND1_X, (width-1), 16, 13);/* pd x1 */
 	DI_Wr_reg_bits(MCDI_PD_22_CHK_WND1_Y, (y1+1), 0, 13);/* pd y0 */
@@ -3047,10 +3099,13 @@ void pulldown_vof_win_config(struct pulldown_detected_s *wins)
 		wins->regs[3].blend_mode, 14, 2);
 }
 
+
 void di_load_regs(struct di_pq_parm_s *di_pq_ptr)
 {
-	unsigned int i = 0, addr = 0, value = 0, mask = 0, len;
-	struct am_reg_s *regs_p;
+	unsigned int i = 0, j = 0, addr = 0, value = 0, mask = 0, len;
+	unsigned int table_name = 0, nr_table = 0;
+	bool ctrl_reg_flag = false;
+	struct am_reg_s *regs_p = NULL;
 
 	if (pq_load_dbg == 1)
 		return;
@@ -3062,21 +3117,39 @@ void di_load_regs(struct di_pq_parm_s *di_pq_ptr)
 		pr_err("[DI] table ptr error.\n");
 		return;
 	}
+	nr_table = TABLE_NAME_NR | TABLE_NAME_DEBLOCK | TABLE_NAME_DEMOSQUITO;
 	regs_p = (struct am_reg_s *)di_pq_ptr->regs;
 	len = di_pq_ptr->pq_parm.table_len;
+	table_name = di_pq_ptr->pq_parm.table_name;
 	for (i = 0; i < len; i++) {
+		ctrl_reg_flag = false;
 		addr = regs_p->addr;
 		value = regs_p->val;
 		mask = regs_p->mask;
 		if (pq_load_dbg == 2)
 			pr_info("[%u][0x%x] = [0x%x]&[0x%x]\n",
 				i, addr, value, mask);
+
+		for (j = 0; j < SKIP_CTRE_NUM; j++) {
+			if (addr == ctrl_regs[j])
+			break;
+		}
+
 		if (regs_p->mask != 0xffffffff) {
 			value = ((Rd(addr) & (~(mask))) |
 				(value & mask));
 		}
 		regs_p++;
-		DI_Wr(addr, value);
+		if (j < SKIP_CTRE_NUM) {
+			if (pq_load_dbg == 3)
+				pr_info("%s skip [0x%x]=[0x%x].\n",
+					__func__, addr, value);
+			continue;
+		}
+		if (table_name & nr_table)
+			ctrl_reg_flag = set_nr_ctrl_reg_table(addr, value);
+		if (!ctrl_reg_flag)
+			DI_Wr(addr, value);
 		if (pq_load_dbg == 2)
 			pr_info("[%u][0x%x] = [0x%x] %s\n", i, addr,
 				value, Rd(addr) != value?"fail":"success");
@@ -3089,4 +3162,5 @@ module_param_named(pre_hold_line, pre_hold_line, ushort, 0644);
 module_param_named(pre_ctrl, pre_ctrl, uint, 0644);
 module_param_named(line_num_post_frst, line_num_post_frst, ushort, 0644);
 module_param_named(line_num_pre_frst, line_num_pre_frst, ushort, 0644);
+module_param_named(pd22_flg_calc_en, pd22_flg_calc_en, bool, 0644);
 #endif

@@ -313,12 +313,14 @@
 		clocks = <&clkc CLKID_DOS_PARSER
 			&clkc CLKID_DEMUX
 			&clkc CLKID_DOS
+			&clkc CLKID_CLK81
 			&clkc CLKID_VDEC_MUX
 			&clkc CLKID_HCODEC_MUX
 			&clkc CLKID_HEVC_MUX>;
 		clock-names = "parser_top",
 			"demux",
 			"vdec",
+			"clk_81",
 			"clk_vdec_mux",
 			"clk_hcodec_mux",
 			"clk_hevc_mux";
@@ -363,7 +365,7 @@
 		compatible = "amlogic, picdec";
 		memory-region = <&picdec_cma_reserved>;
 		dev_name = "picdec";
-		status = "disabled";
+		status = "okay";
 	};
 
 	ppmgr {
@@ -748,7 +750,7 @@
 		compatible = "amlogic, unifykey";
 		status = "okay";
 
-		unifykey-num = <16>;
+		unifykey-num = <17>;
 		unifykey-index-0 = <&keysn_0>;
 		unifykey-index-1 = <&keysn_1>;
 		unifykey-index-2 = <&keysn_2>;
@@ -765,6 +767,7 @@
 		unifykey-index-13 = <&keysn_13>;
 		unifykey-index-14 = <&keysn_14>;
 		unifykey-index-15 = <&keysn_15>;
+		unifykey-index-16 = <&keysn_16>;
 
 		keysn_0: key_0{
 			key-name = "usid";
@@ -848,6 +851,11 @@
 		};
 		keysn_15:key_15{
 			key-name = "prprivkeybox";// PlayReady
+			key-device = "secure";
+			key-permit = "read","write","del";
+		};
+		keysn_16:key_16{
+			key-name = "attestationkeybox";// attestation key
 			key-device = "secure";
 			key-permit = "read","write","del";
 		};
@@ -935,10 +943,13 @@
 		port_num = <3>;
 		ee_cec;
 		arc_port_mask = <0x2>;
-		interrupts = <0 205 1>;
-		interrupt-names = "hdmi_aocecb";
-		pinctrl-names = "default";
-		pinctrl-0=<&hdmitx_aocecb>;
+		interrupts = <0 205 1
+					0 199 1>;
+		interrupt-names = "hdmi_aocecb","hdmi_aocec";
+		pinctrl-names = "default","hdmitx_aocecb","cec_pin_sleep";
+		pinctrl-0=<&hdmitx_aocec>;
+		pinctrl-1=<&hdmitx_aocecb>;
+		pinctrl-2=<&hdmitx_aocecb>;
 		reg = <0x0 0xFF80023c 0x0 0x4
 		       0x0 0xFF800000 0x0 0x400>;
 	};
@@ -1127,8 +1138,14 @@
 	spdif_codec: spdif_codec{
 		#sound-dai-cells = <0>;
 		compatible = "amlogic, aml-spdif-codec";
-		pinctrl-names = "audio_spdif";
-		pinctrl-0 = <&audio_spdif_pins>;
+		pinctrl-names = "audio_spdif_out",
+						"audio_spdif_out_mute",
+						"audio_spdif_in",
+						"audio_spdif_in_mute";
+		pinctrl-0 = <&audio_spdif_out_pins>;
+		pinctrl-1 = <&audio_spdif_out_mute_pins>;
+		pinctrl-2 = <&audio_spdif_in_pins>;
+		pinctrl-3 = <&audio_spdif_in_mute_pins>;
 	};
 
 	pcm_codec: pcm_codec{
@@ -1160,6 +1177,9 @@
 		pinctrl-0 = <&aml_audio_i2s>;
 		/*avout mute gpio*/
 		mute_gpio-gpios = <&gpio GPIOZ_7 GPIO_ACTIVE_HIGH>;
+		/*switch ARC_IN & SPDIF_IN*/
+		source_switch-gpios = <&gpio GPIOZ_4 GPIO_ACTIVE_HIGH>;
+		source_switch_inv = <1>;
 		/*analog amp mute*/
 		/*amp_mute_gpio-gpios = <&gpio GPIOZ_18 GPIO_ACTIVE_LOW>;*/
 		aux_dev = <&tas5707>;
@@ -1192,7 +1212,7 @@
 		};
 		Channel_Mask {
 			/*i2s has 4 pins, 8channel, mux output*/
-			Speaker_Channel_Mask = "i2s_0/1";
+			Speaker0_Channel_Mask = "i2s_2/3";
 			DAC0_Channel_Mask = "i2s_2/3";
 			DAC1_Channel_Mask = "i2s_2/3";
 			EQ_DRC_Channel_Mask = "i2s_2/3";
@@ -1207,25 +1227,10 @@
 	};
 	/* end of AUDIO board specific */
 
-	dvb {
-		compatible = "amlogic, dvb";
-		dev_name = "dvb";
-		status = "disabled";
-		/*"parallel","serial","disable"*/
-		ts2 = "parallel";
-		ts2_control = <0>;
-		ts2_invert = <0>;
-		//resets = <&clock GCLK_IDX_DEMUX
-		//		&clock GCLK_IDX_ASYNC_FIFO
-		//		&clock GCLK_IDX_AHB_ARB0
-		//		&clock GCLK_IDX_U_PARSER_TOP>;
-		//reset-names = "demux", "asyncfifo", "ahbarb0", "uparsertop";
-	};
-
 	aml_sensor0: aml-sensor@0 {
 		compatible = "amlogic, aml-thermal";
 		device_name = "thermal";
-		status = "disabled";
+		status = "okay";
 		#thermal-sensor-cells = <1>;
 		cooling_devices {
 			cpufreq_cool_cluster0 {
@@ -1268,18 +1273,59 @@
 	dvb {
 		compatible = "amlogic, dvb";
 		dev_name = "dvb";
-		status = "disabled";
+		status = "okay";
+		fe0_mode = "internal";
+		fe0_tuner = "si2151_tuner";
+		fe0_i2c_adap_id = <&i2c1>;
+		fe0_tuner_i2c_addr = <0x60>;
+
 		/*"parallel","serial","disable"*/
 		ts2 = "parallel";
 		ts2_control = <0>;
 		ts2_invert = <0>;
-		//resets = <&clock GCLK_IDX_DEMUX
-		//		&clock GCLK_IDX_ASYNC_FIFO
-		//		&clock GCLK_IDX_AHB_ARB0
-		//		&clock GCLK_IDX_U_PARSER_TOP>;
-		//reset-names = "demux", "asyncfifo", "ahbarb0", "uparsertop";
+		interrupts = <0 23 1
+					0 5 1
+					0 53 1
+					0 19 1
+					0 25 1
+					0 18 1
+					0 24 1>;
+		interrupt-names = "demux0_irq",
+						"demux1_irq",
+						"demux2_irq",
+						"dvr0_irq",
+						"dvr1_irq",
+						"dvrfill0_fill",
+						"dvrfill1_flush";
+		clocks = <&clkc CLKID_DEMUX
+			&clkc CLKID_ASYNC_FIFO
+			&clkc CLKID_AHB_ARB0
+			&clkc CLKID_DOS_PARSER>;
+		clock-names = "demux", "asyncfifo", "ahbarb0", "uparsertop";
 	};
+	aml_dtv_demod {
+		compatible = "amlogic, ddemod-txlx";
+		dev_name = "aml_dtv_demod";
+		status = "okay";
 
+		//pinctrl-names="dtvdemod_agc";
+		//pinctrl-0=<&dtvdemod_agc>;
+
+		clocks = <&clkc CLKID_DAC_CLK>;
+		clock-names = "vdac_clk_gate";
+
+		reg = <0x0 0xff644000 0x0 0x2000	/*dtv demod base*/
+			   0x0 0xff63c000 0x0 0x2000	/*hiu reg base*/
+			   0x0 0xff800000 0x0 0x1000	/*io_aobus_base*/
+			   0x0 0xffd01000 0x0 0x1000	/*reset*/
+			   >;
+		/*move from dvbfe*/
+		dtv_demod0_mem = <0>;	// need move to aml_dtv_demod ?
+		spectrum = <1>;
+		cma_flag = <1>;
+		cma_mem_size = <8>;
+		memory-region = <&demod_cma_reserved>;//<&demod_reserved>;
+	};
 	dvbfe {
 		compatible = "amlogic, dvbfe";
 		dev_name = "dvbfe";
@@ -1347,7 +1393,7 @@
 				};
 				gpufreq_cooling_map {
 					trip = <&control>;
-					//cooling-device = <&gpu 0 4>;
+					cooling-device = <&gpu 0 4>;
 					contribution = <1024>;
 				};
 				gpucore_cooling_map {
@@ -1405,14 +1451,28 @@
 		};
 	};
 	/*spdif*/
-	audio_spdif_pins: audio_spdif_pins {
-		in_mux {
+	audio_spdif_out_pins: audio_spdif_out_pins {
+		mux {
+			groups = "spdif_out_z";
+			function = "spdif_out";
+		};
+	};
+	audio_spdif_out_mute_pins: audio_spdif_out_mute_pins {
+		mux {
+			groups = "GPIOZ_17";
+			function = "gpio_periphs";
+		};
+	};
+	audio_spdif_in_pins: audio_spdif_in_pins {
+	    mux {
 			groups = "spdif_in_z18";
 			function = "spdif_in";
 		};
-		out_mux {
-			groups = "spdif_out_z";
-			function = "spdif_out";
+	};
+	audio_spdif_in_mute_pins: audio_spdif_in_mute_pins {
+	    mux {
+			groups = "GPIOZ_18";
+			function = "gpio_periphs";
 		};
 	};
 	/*pcm*/

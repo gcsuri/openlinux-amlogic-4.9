@@ -18,7 +18,7 @@
 #ifndef __AO_CEC_H__
 #define __AO_CEC_H__
 
-#define CEC_DRIVER_VERSION	"2018/03/27\n"
+#define CEC_DRIVER_VERSION	"Ver**2018/07/03**\n"
 
 #define CEC_FRAME_DELAY		msecs_to_jiffies(400)
 #define CEC_DEV_NAME		"cec"
@@ -33,6 +33,8 @@
 #define ONE_TOUCH_STANDBY_MASK		2
 #define AUTO_POWER_ON_MASK		3
 
+#define CEC_FUNC_CFG_ALL		0x2f
+#define CEC_FUNC_CFG_NONE		0x0
 
 #define AO_BASE				0xc8100000
 
@@ -58,6 +60,7 @@
 #define AO_DEBUG_REG1			((0x29 << 2))
 #define AO_DEBUG_REG2			((0x2a << 2))
 #define AO_DEBUG_REG3			((0x2b << 2))
+/* for new add after g12a/b ...*/
 #define AO_CEC_STICKY_DATA0			((0xca << 2))
 #define AO_CEC_STICKY_DATA1			((0xcb << 2))
 #define AO_CEC_STICKY_DATA2			((0xcc << 2))
@@ -345,7 +348,7 @@
 #define EECEC_IRQ_TX_ERR_INITIATOR	(1 << 20)
 #define EECEC_IRQ_RX_ERR_FOLLOWER	(1 << 21)
 #define EECEC_IRQ_RX_WAKEUP		(1 << 22)
-#define EE_CEC_IRQ_EN_MASK		(0xf << 16)
+#define EE_CEC_IRQ_EN_MASK		(0x1f << 16)
 
 /* cec irq bit flags for AO_CEC_B */
 #define CECB_IRQ_TX_DONE		(1 << 0)
@@ -355,7 +358,7 @@
 #define CECB_IRQ_TX_ERR_INITIATOR	(1 << 4)
 #define CECB_IRQ_RX_ERR_FOLLOWER	(1 << 5)
 #define CECB_IRQ_RX_WAKEUP		(1 << 6)
-#define CECB_IRQ_EN_MASK		(0xf << 0)
+#define CECB_IRQ_EN_MASK		(0x1f << 0)
 
 /* common mask */
 #define CEC_IRQ_TX_DONE			(1 << (16 - shift))
@@ -371,16 +374,8 @@
 
 #define HHI_32K_CLK_CNTL		(0x89 << 2)
 
-#ifdef CONFIG_AMLOGIC_AO_CEC
-unsigned int aocec_rd_reg(unsigned long addr);
-void aocec_wr_reg(unsigned long addr, unsigned long data);
-void cecrx_irq_handle(void);
-void cec_logicaddr_set(int l_add);
-void cec_arbit_bit_time_set(unsigned int bit_set,
-				unsigned int time_set, unsigned int flag);
-void cec_irq_enable(bool enable);
-void aocec_irq_enable(bool enable);
-#endif
+
+
 
 #ifdef CONFIG_AMLOGIC_MEDIA_TVIN_HDMI
 extern unsigned long hdmirx_rd_top(unsigned long addr);
@@ -404,6 +399,23 @@ static inline uint32_t hdmirx_rd_dwc(uint16_t addr)
 static inline void hdmirx_wr_dwc(uint16_t addr, uint32_t data)
 {
 }
+#endif
+
+extern int hdmirx_get_connect_info(void);
+int __attribute__((weak))hdmirx_get_connect_info(void)
+{
+	return 0;
+}
+
+#ifdef CONFIG_AMLOGIC_AO_CEC
+unsigned int aocec_rd_reg(unsigned long addr);
+void aocec_wr_reg(unsigned long addr, unsigned long data);
+void cecrx_irq_handle(void);
+void cec_logicaddr_set(int l_add);
+void cec_arbit_bit_time_set(unsigned int bit_set,
+				unsigned int time_set, unsigned int flag);
+void cec_irq_enable(bool enable);
+void aocec_irq_enable(bool enable);
 #endif
 
 #endif	/* __AO_CEC_H__ */

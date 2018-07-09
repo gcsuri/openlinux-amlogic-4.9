@@ -164,7 +164,8 @@ static int meson_pwm_calc(struct meson_pwm *meson,
 			  unsigned int duty, unsigned int period)
 {
 	unsigned int pre_div, cnt, duty_cnt;
-	unsigned long fin_freq = -1, fin_ns;
+	unsigned long fin_freq = -1;
+	u64 fin_ps;
 
 	if (~(meson->inverter_mask >> id) & 0x1)
 		duty = period - duty;
@@ -180,13 +181,15 @@ static int meson_pwm_calc(struct meson_pwm *meson,
 	}
 
 	dev_dbg(meson->chip.dev, "fin_freq: %lu Hz\n", fin_freq);
-	fin_ns = NSEC_PER_SEC / fin_freq;
+	fin_ps = (u64)NSEC_PER_SEC * 1000;
+	do_div(fin_ps, fin_freq);
 
 	/* Calc pre_div with the period */
 	for (pre_div = 0; pre_div < MISC_CLK_DIV_MASK; pre_div++) {
-		cnt = DIV_ROUND_CLOSEST(period, fin_ns * (pre_div + 1));
-		dev_dbg(meson->chip.dev, "fin_ns=%lu pre_div=%u cnt=%u\n",
-			fin_ns, pre_div, cnt);
+		cnt = DIV_ROUND_CLOSEST_ULL((u64)period * 1000,
+				fin_ps * (pre_div + 1));
+		dev_dbg(meson->chip.dev, "fin_ns=%llu pre_div=%u cnt=%u\n",
+			fin_ps, pre_div, cnt);
 		if (cnt <= 0xffff)
 			break;
 	}
@@ -209,7 +212,8 @@ static int meson_pwm_calc(struct meson_pwm *meson,
 		channel->lo = cnt;
 	} else {
 		/* Then check is we can have the duty with the same pre_div */
-		duty_cnt = DIV_ROUND_CLOSEST(duty, fin_ns * (pre_div + 1));
+		duty_cnt = DIV_ROUND_CLOSEST_ULL((u64)duty * 1000,
+					fin_ps * (pre_div + 1));
 		if (duty_cnt > 0xffff) {
 			dev_err(meson->chip.dev, "unable to get duty cycle\n");
 			return -EINVAL;
@@ -222,6 +226,16 @@ static int meson_pwm_calc(struct meson_pwm *meson,
 		channel->hi = duty_cnt - 1;
 		channel->lo = cnt - duty_cnt - 1;
 	}
+	/*
+	 * duty_cycle equal 0% and 100%,constant should be enabled,
+	 * high and low count will not incease one;
+	 * otherwise, high and low count increase one.
+	 */
+	if (duty == period || duty == 0)
+		pwm_constant_enable(meson, id);
+	else
+		pwm_constant_disable(meson, id);
+
 
 	return 0;
 }
@@ -507,6 +521,8 @@ static const struct meson_pwm_data pwm_m8b_data = {
 static const struct of_device_id meson_pwm_matches[] = {
 	{ .compatible = "amlogic,g12a-ee-pwm", .data = &pwm_g12a_ee_data },
 	{ .compatible = "amlogic,g12a-ao-pwm", .data = &pwm_g12a_ao_data },
+	{ .compatible = "amlogic,g12b-ee-pwm", .data = &pwm_g12a_ee_data },
+	{ .compatible = "amlogic,g12b-ao-pwm", .data = &pwm_g12a_ao_data },
 	{ .compatible = "amlogic,txlx-ee-pwm", .data = &pwm_txlx_ee_data },
 	{ .compatible = "amlogic,txlx-ao-pwm", .data = &pwm_txlx_ao_data },
 	{ .compatible = "amlogic,axg-ee-pwm", .data = &pwm_axg_ee_data },

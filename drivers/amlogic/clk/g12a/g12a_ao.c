@@ -125,6 +125,7 @@ static void __init g12a_aoclkc_init(struct device_node *np)
 			/* return -ENOMEM; */
 			return;
 		}
+		clk_numbers = NR_CLKS;
 	}
 
 	for (clkid = CLKID_AO_BASE; clkid < NR_CLKS; clkid++) {
@@ -140,5 +141,6 @@ static void __init g12a_aoclkc_init(struct device_node *np)
 }
 
 CLK_OF_DECLARE(g12a, "amlogic,g12a-aoclkc", g12a_aoclkc_init);
+CLK_OF_DECLARE(g12b, "amlogic,g12b-aoclkc", g12a_aoclkc_init);
 
 

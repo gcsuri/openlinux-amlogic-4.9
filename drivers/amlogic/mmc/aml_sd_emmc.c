@@ -716,6 +716,7 @@ int aml_sd_emmc_execute_tuning_(struct mmc_host *mmc, u32 opcode,
 	u32 clock, clk_div;
 	u32 adj_delay_find;
 	int best_win_start = -1, best_win_size = 0;
+	u32 rxdly[4] = {0, 0x55555555, 0xAAAAAAAA, 0xFFFFFFFF};
 
 	writel(0, host->base + SD_EMMC_ADJUST);
 
@@ -745,6 +746,17 @@ tunning:
 		pdata->clkc = vclk;
 		pr_err("%s: tuning failed, reduce freq and retuning\n",
 			mmc_hostname(host->mmc));
+		goto tunning;
+	} else if (best_win_size == clk_div) {
+		if (++tuning_num > MAX_TUNING_RETRY) {
+			pr_err("%s: tuning failed\n",
+				mmc_hostname(host->mmc));
+			return -1;
+		}
+		pr_warn("wave is not sharp, again\n");
+		/* add basic data rx delay */
+		writel(rxdly[tuning_num-1], host->base + SD_EMMC_DELAY);
+		pr_warn("rxdly @ %d is %x\n", tuning_num, rxdly[tuning_num-1]);
 		goto tunning;
 	} else {
 		pr_info("%s: best_win_start =%d, best_win_size =%d\n",
@@ -1059,6 +1071,7 @@ static void aml_mmc_clk_switch_off(struct amlsd_platform *pdata)
 	vcfg = readl(host->base + SD_EMMC_CFG);
 	conf->stop_clk = 1;
 	writel(vcfg, host->base + SD_EMMC_CFG);
+	pdata->stop_clk = 1;
 
 	host->is_gated = true;
 }
@@ -1133,9 +1146,6 @@ void aml_sd_emmc_save_host_val(struct mmc_host *mmc)
 	struct amlsd_host *host = pdata->host;
 	unsigned long clk_ios;
 
-	strcpy(host->cur_dev, pdata->pinname);
-	host->val_f = 0;
-
 	clk_ios = clk_get_rate(host->cfg_div_clk);
 	vconf = readl(host->base + SD_EMMC_CFG);
 	adj = readl(host->base + SD_EMMC_ADJUST_V3);
@@ -1145,6 +1155,7 @@ void aml_sd_emmc_save_host_val(struct mmc_host *mmc)
 
 	if ((pconf->bus_width == pdata->bus_width)
 			&& (pconf->bl_len == pdata->bl_len)
+			&& (pconf->stop_clk == pdata->stop_clk)
 			&& (mmc->actual_clock == clk_ios)
 			&& (adj == pdata->adj)
 			&& (dly1 == pdata->dly1)
@@ -1152,9 +1163,12 @@ void aml_sd_emmc_save_host_val(struct mmc_host *mmc)
 			&& (intf3 == pdata->intf3))
 		return;
 
+	if (aml_card_type_non_sdio(pdata))
+		vconf = pdata->ctrl;
 	clk_ios = mmc->actual_clock;
 	pconf->bus_width = pdata->bus_width;
 	pconf->bl_len = pdata->bl_len;
+	pconf->stop_clk = pdata->stop_clk;
 	adj = pdata->adj;
 	dly1 = pdata->dly1;
 	dly2 = pdata->dly2;
@@ -1868,7 +1882,8 @@ int meson_mmc_request_done(struct mmc_host *mmc, struct mmc_request *mrq)
 	mmc_request_done(host->mmc, mrq);
 #ifdef AML_MMC_TDMA
 	if ((host->mem->start == host->data->port_b_base)
-			&& (host->data->chip_type == MMC_CHIP_G12A))
+			&& (host->data->chip_type == MMC_CHIP_G12A)
+			&& (host->is_tunning == 0))
 		complete(&host->drv_completion);
 #endif
 
@@ -2208,14 +2223,16 @@ static void meson_mmc_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	host = pdata->host;
 #ifdef AML_MMC_TDMA
 	if ((host->mem->start == host->data->port_b_base)
-			&& (host->data->chip_type == MMC_CHIP_G12A))
+			&& (host->data->chip_type == MMC_CHIP_G12A)
+			&& (mrq->cmd->opcode != MMC_SEND_TUNING_BLOCK))
 		wait_for_completion(&host->drv_completion);
 #endif
 
 	if (aml_check_unsupport_cmd(mmc, mrq)) {
 #ifdef AML_MMC_TDMA
 		if ((host->mem->start == host->data->port_b_base)
-				&& (host->data->chip_type == MMC_CHIP_G12A))
+				&& (host->data->chip_type == MMC_CHIP_G12A)
+			&& (mrq->cmd->opcode != MMC_SEND_TUNING_BLOCK))
 			complete(&host->drv_completion);
 #endif
 		return;
@@ -2237,10 +2254,8 @@ static void meson_mmc_request(struct mmc_host *mmc, struct mmc_request *mrq)
 		pdata->xfer_pre(pdata);
 
 #ifdef AML_MMC_TDMA
-	if ((aml_card_type_sdio(pdata)
-				|| aml_card_type_non_sdio(pdata))
+		if ((host->mem->start == host->data->port_b_base)
 			&& (host->data->chip_type == MMC_CHIP_G12A)) {
-		if (strcmp(host->cur_dev, pdata->pinname) || host->val_f)
 			aml_sd_emmc_save_host_val(mmc);
 	}
 #endif
@@ -2808,7 +2823,8 @@ static void aml_sd_emmc_enable_sdio_irq(struct mmc_host *mmc, int enable)
 	unsigned long flags;
 	/* u32 vstat = 0; */
 	u32 vclkc = 0;
-	struct sd_emmc_clock *pclock = (struct sd_emmc_clock *)&vclkc;
+	struct sd_emmc_clock *pclock = NULL;
+	struct sd_emmc_clock_v3 *pclock_v3 = NULL;
 	u32 vconf = 0;
 	struct sd_emmc_config *pconf = (struct sd_emmc_config *)&vconf;
 	u32 virqc = 0;
@@ -2816,12 +2832,9 @@ static void aml_sd_emmc_enable_sdio_irq(struct mmc_host *mmc, int enable)
 
 	host->sdio_irqen = enable;
 	spin_lock_irqsave(&host->mrq_lock, flags);
-	vclkc = readl(host->base + SD_EMMC_CLOCK);
 	vconf = readl(host->base + SD_EMMC_CFG);
 	virqc = readl(host->base + SD_EMMC_IRQ_EN);
 
-	pclock->irq_sdio_sleep = 1;
-	pclock->irq_sdio_sleep_ds = 0;
 	pconf->irq_ds = 0;
 
 	/* vstat = sd_emmc_regs->gstatus&SD_EMMC_IRQ_ALL; */
@@ -2831,8 +2844,20 @@ static void aml_sd_emmc_enable_sdio_irq(struct mmc_host *mmc, int enable)
 		irqc->irq_sdio = 0;
 
 	writel(virqc, host->base + SD_EMMC_IRQ_EN);
-	writel(vclkc, host->base + SD_EMMC_CLOCK);
 	writel(vconf, host->base + SD_EMMC_CFG);
+	if (host->ctrl_ver >= 3) {
+		pclock_v3 = (struct sd_emmc_clock_v3 *)&vclkc;
+		vclkc = readl(host->base + SD_EMMC_CLOCK_V3);
+		pclock_v3->irq_sdio_sleep = 1;
+		pclock_v3->irq_sdio_sleep_ds = 0;
+		writel(vclkc, host->base + SD_EMMC_CLOCK_V3);
+	} else {
+		pclock = (struct sd_emmc_clock *)&vclkc;
+		vclkc = readl(host->base + SD_EMMC_CLOCK);
+		pclock->irq_sdio_sleep = 1;
+		pclock->irq_sdio_sleep_ds = 0;
+		writel(vclkc, host->base + SD_EMMC_CLOCK);
+	}
 	pdata->clkc = vclkc;
 
 	spin_unlock_irqrestore(&host->mrq_lock, flags);
@@ -2995,11 +3020,17 @@ static int meson_mmc_probe(struct platform_device *pdev)
 		goto fail_init_host;
 	}
 
-	if (host->ctrl_ver >= 3)
-		ret = devm_request_threaded_irq(&pdev->dev, host->irq,
-			meson_mmc_irq, meson_mmc_irq_thread_v3,
-			IRQF_SHARED, "meson-aml-mmc", host);
-	else
+	if (host->ctrl_ver >= 3) {
+		if ((host->mem->start == host->data->port_b_base)
+				&& (host->data->chip_type == MMC_CHIP_G12A))
+			ret = devm_request_threaded_irq(&pdev->dev, host->irq,
+					meson_mmc_irq, meson_mmc_irq_thread_v3,
+					IRQF_ONESHOT, "meson-aml-mmc", host);
+		else
+			ret = devm_request_threaded_irq(&pdev->dev, host->irq,
+					meson_mmc_irq, meson_mmc_irq_thread_v3,
+					IRQF_SHARED, "meson-aml-mmc", host);
+	} else
 		ret = devm_request_threaded_irq(&pdev->dev, host->irq,
 			meson_mmc_irq, meson_mmc_irq_thread,
 			IRQF_SHARED, "meson-aml-mmc", host);
@@ -3081,6 +3112,7 @@ static int meson_mmc_probe(struct platform_device *pdev)
 	/* save def clk & cfg */
 	pdata->clkc = clk;
 	pdata->ctrl = cfg;
+	pdata->bl_len = (cfg >> 4) & 0xf;
 
 	if (pdata->caps & MMC_CAP_NONREMOVABLE)
 		pdata->is_in = 1;
@@ -3207,7 +3239,7 @@ static int meson_mmc_probe(struct platform_device *pdev)
 				IRQF_TRIGGER_RISING
 				| IRQF_TRIGGER_FALLING
 				| IRQF_ONESHOT,
-				"amlsd_cd", host);
+				"amlsd_cd", pdata);
 		if (ret) {
 			pr_err("Failed to request SD IN detect\n");
 			goto free_host;
@@ -3334,6 +3366,7 @@ static struct meson_mmc_data mmc_data_txlx = {
 	.ds_pin_poll = 0x3c,
 	.ds_pin_poll_en = 0x4a,
 	.ds_pin_poll_bit = 11,
+	.latest_dat = 7,
 	.sdmmc.init.core_phase = 3,
 	.sdmmc.init.tx_phase = 0,
 	.sdmmc.init.rx_phase = 0,
@@ -3426,6 +3459,27 @@ static struct meson_mmc_data mmc_data_g12a = {
 	.sdmmc.sdr104.core_phase = 2,
 };
 
+static struct meson_mmc_data mmc_data_g12b = {
+	.chip_type = MMC_CHIP_G12B,
+	.port_a_base = 0xffe03000,
+	.port_b_base = 0xffe05000,
+	.port_c_base = 0xffe07000,
+	.pinmux_base = 0xff634400,
+	.clksrc_base = 0xff63c000,
+	.ds_pin_poll = 0x3a,
+	.ds_pin_poll_en = 0x48,
+	.ds_pin_poll_bit = 13,
+	.sdmmc.init.core_phase = 3,
+	.sdmmc.init.tx_phase = 0,
+	.sdmmc.init.rx_phase = 0,
+	.sdmmc.hs.core_phase = 1,
+	.sdmmc.ddr.core_phase = 2,
+	.sdmmc.hs2.core_phase = 3,
+	.sdmmc.hs4.tx_delay = 0,
+	.sdmmc.sd_hs.core_phase = 2,
+	.sdmmc.sdr104.core_phase = 2,
+};
+
 static const struct of_device_id meson_mmc_of_match[] = {
 	{
 		.compatible = "amlogic, meson-mmc-gxbb",
@@ -3467,6 +3521,11 @@ static const struct of_device_id meson_mmc_of_match[] = {
 		.compatible = "amlogic, meson-mmc-g12a",
 		.data = &mmc_data_g12a,
 	},
+	{
+		.compatible = "amlogic, meson-mmc-g12b",
+		.data = &mmc_data_g12b,
+	},
+
 	{}
 };
 MODULE_DEVICE_TABLE(of, meson_mmc_of_match);

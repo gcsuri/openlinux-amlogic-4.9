@@ -119,9 +119,20 @@ bool en_4096_2_3840;
 int en_4k_2_2k;
 int en_4k_timing = 1;
 bool hdmi_cec_en;
-int skip_frame_cnt = 1;
-
-
+int vdin_drop_frame_cnt = 1;
+/* suspend_pddq_sel:
+ * 0: keep phy on when suspend(don't need phy init when
+ *   resume), it doesn't work now because phy VDDIO_3.3V
+ *   will power off when suspend, and tmds clk will be low;
+ * 1&2: when CEC off there's no SDA low issue for MTK box,
+ *   these workaround are not needed
+ * 1: disable phy when suspend, set rxsense 1 and 0 when resume to
+ *   release DDC from hdcp2.2 for MTK box, as LG 49UB8800-CE does
+ * 2: disable phy when suspend, set rxsense 1 and 0 when suspend
+ *   to release DDC from hdcp2.2 for MTK xiaomi box
+ * other value: keep previous logic
+ */
+int suspend_pddq_sel = 1;
 
 struct reg_map reg_maps[MAP_ADDR_MODULE_NUM];
 
@@ -556,6 +567,12 @@ void hdmirx_set_timing_info(struct tvin_sig_property_s *prop)
 		prop->ve = 1;
 }
 
+int hdmirx_get_connect_info(void)
+{
+	return pwr_sts;
+}
+EXPORT_SYMBOL(hdmirx_get_connect_info);
+
 /*
  * hdmirx_get_color_fmt - get video color format
  */
@@ -800,7 +817,7 @@ void hdmirx_get_sig_property(struct tvin_frontend_s *fe,
 	hdmirx_set_timing_info(prop);
 	hdmirx_get_hdr_info(prop);
 	hdmirx_get_vsi_info(prop);
-	prop->skip_vf_num = skip_frame_cnt;
+	prop->skip_vf_num = vdin_drop_frame_cnt;
 }
 
 /*
@@ -990,7 +1007,7 @@ static long hdmirx_ioctl(struct file *file, unsigned int cmd,
 		memset(&pkt_info, 0, sizeof(pkt_info));
 		srcbuff = &pkt_info;
 		size = sizeof(struct pd_infoframe_s);
-		rx_get_pd_fifo_param(param, &pkt_info, size);
+		rx_get_pd_fifo_param(param, &pkt_info);
 
 		/*return pkt info*/
 		if ((size > 0) && (srcbuff != NULL) && (argp != NULL)) {
@@ -1126,13 +1143,13 @@ int rx_pr(const char *fmt, ...)
 			else
 				break;
 
-		strcpy(buf + 5, fmt + pos);
+		strncpy(buf + 5, fmt + pos, (sizeof(buf) - 5));
 	} else
 		strcpy(buf, fmt);
-	/* if (fmt[strlen(fmt) - 1] == '\n') */
-		/* last_break = 1; */
-	/* else */
-		/* last_break = 0; */
+	if (fmt[strlen(fmt) - 1] == '\n')
+		last_break = 1;
+	else
+		last_break = 0;
 	if (log_level & LOG_EN) {
 		va_start(args, fmt);
 		vprintk(buf, args);
@@ -1457,19 +1474,19 @@ static void hdmirx_get_base_addr(struct device_node *node)
 	}
 }
 
-static int hdmirx_switch_pinmux(struct device  dev)
+static int hdmirx_switch_pinmux(struct device *dev)
 {
 	struct pinctrl *pin;
 	const char *pin_name;
 	int ret = 0;
 
 	/* pinmux set */
-	if (dev.of_node) {
-		ret = of_property_read_string_index(dev.of_node,
+	if (dev->of_node) {
+		ret = of_property_read_string_index(dev->of_node,
 					    "pinctrl-names",
 					    0, &pin_name);
 		if (!ret)
-			pin = devm_pinctrl_get_select(&dev, pin_name);
+			pin = devm_pinctrl_get_select(dev, pin_name);
 			/* rx_pr("hdmirx: pinmux:%p, name:%s\n", */
 			/* pin, pin_name); */
 	}
@@ -1512,6 +1529,12 @@ static int hdmirx_probe(struct platform_device *pdev)
 	log_init(DEF_LOG_BUF_SIZE);
 	pEdid_buffer = (unsigned char *) pdev->dev.platform_data;
 	hdmirx_dev = &pdev->dev;
+	/*get compatible matched device, to get chip related data*/
+	of_id = of_match_device(hdmirx_dt_match, &pdev->dev);
+	if (!of_id) {
+		rx_pr("unable to get matched device\n");
+		return -1;
+	}
 	/* allocate memory for the per-device structure */
 	hdevp = kmalloc(sizeof(struct hdmirx_dev_s), GFP_KERNEL);
 	if (!hdevp) {
@@ -1520,10 +1543,6 @@ static int hdmirx_probe(struct platform_device *pdev)
 		goto fail_kmalloc_hdev;
 	}
 	memset(hdevp, 0, sizeof(struct hdmirx_dev_s));
-	/*get compatible matched device, to get chip related data*/
-	of_id = of_match_device(hdmirx_dt_match, &pdev->dev);
-	if (!of_id)
-		rx_pr("unable to get matched device\n");
 	hdevp->data = of_id->data;
 	if (hdevp->data)
 		rx.chip_id = hdevp->data->chip_id;
@@ -1769,7 +1788,7 @@ static int hdmirx_probe(struct platform_device *pdev)
 		en_4k_timing = 1;
 
 	hdmirx_hw_probe();
-	hdmirx_switch_pinmux(pdev->dev);
+	hdmirx_switch_pinmux(&(pdev->dev));
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	register_early_suspend(&hdmirx_early_suspend_handler);
 #endif
@@ -1890,8 +1909,22 @@ static int hdmirx_suspend(struct platform_device *pdev, pm_message_t state)
 	if (!hdmi_cec_en)
 		rx_force_hpd_cfg(0);
 
-	/* phy powerdown */
-	hdmirx_phy_pddq(1);
+	if (suspend_pddq_sel == 0)
+		rx_pr("don't set phy pddq down\n");
+	else {
+		/* there's no SDA low issue on MTK box when CEC off */
+		if (hdmi_cec_en != 0) {
+			if (suspend_pddq_sel == 2) {
+				/* set rxsense pulse */
+				mdelay(10);
+				hdmirx_phy_pddq(1);
+				mdelay(10);
+				hdmirx_phy_pddq(0);
+			}
+		}
+		/* phy powerdown */
+		hdmirx_phy_pddq(1);
+	}
 	if (hdcp22_on)
 		hdcp22_suspend();
 	rx_pr("[hdmirx]: suspend success\n");
@@ -1903,6 +1936,18 @@ static int hdmirx_resume(struct platform_device *pdev)
 	struct hdmirx_dev_s *hdevp;
 
 	hdevp = platform_get_drvdata(pdev);
+	if (hdmi_cec_en != 0) {
+		if (suspend_pddq_sel == 1) {
+			/* set rxsense pulse, if delay time between
+			 * rxsense pulse and phy_int shottern than
+			 * 50ms, SDA may be pulled low 800ms on MTK box
+			 */
+			hdmirx_phy_pddq(0);
+			mdelay(10);
+			hdmirx_phy_pddq(1);
+			mdelay(50);
+		}
+	}
 	hdmirx_phy_init();
 	add_timer(&hdevp->timer);
 	if (hdcp22_on)

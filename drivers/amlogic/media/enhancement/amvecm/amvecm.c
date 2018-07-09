@@ -57,6 +57,7 @@
 #include "bitdepth.h"
 #include <linux/amlogic/media/amdolbyvision/dolby_vision.h>
 #include "dnlp_cal.h"
+#include "vlock.h"
 
 #define pr_amvecm_dbg(fmt, args...)\
 	do {\
@@ -71,6 +72,8 @@
 #define AMVECM_MODULE_NAME        "amvecm"
 #define AMVECM_DEVICE_NAME        "amvecm"
 #define AMVECM_CLASS_NAME         "amvecm"
+#define AMVECM_VER				"Ref.2018/07/03"
+
 
 struct amvecm_dev_s {
 	dev_t                       devt;
@@ -79,6 +82,9 @@ struct amvecm_dev_s {
 	struct device               *dev;
 	struct class                *clsp;
 	wait_queue_head_t           hdr_queue;
+	/*hdr*/
+	struct hdr_data_t	hdr_d;
+
 };
 
 static struct amvecm_dev_s amvecm_dev;
@@ -91,8 +97,6 @@ static int hue_pre;  /*-25~25*/
 static int saturation_pre;  /*-128~127*/
 static int hue_post;  /*-25~25*/
 static int saturation_post;  /*-128~127*/
-/*contrast add saturation add*/
-static int satu_shift_by_con;  /*-128~127*/
 
 static s16 saturation_ma;
 static s16 saturation_mb;
@@ -109,8 +113,8 @@ static struct hdr_metadata_info_s vpp_hdr_metadata_s;
 
 void __iomem *amvecm_hiu_reg_base;/* = *ioremap(0xc883c000, 0x2000); */
 
-static bool debug_amvecm;
-module_param(debug_amvecm, bool, 0664);
+static int debug_amvecm;
+module_param(debug_amvecm, int, 0664);
 MODULE_PARM_DESC(debug_amvecm, "\n debug_amvecm\n");
 
 unsigned int vecm_latch_flag;
@@ -149,7 +153,17 @@ unsigned int pq_user_latch_flag;
 module_param(pq_user_latch_flag, uint, 0664);
 MODULE_PARM_DESC(pq_user_latch_flag, "\n pq_user_latch_flag\n");
 
+/*0: 709/601	1: bt2020*/
+int tx_op_color_primary;
+module_param(tx_op_color_primary, int, 0664);
+MODULE_PARM_DESC(tx_op_color_primary,
+		"tx output color_primary");
+
+unsigned int debug_game_mode_1;
+module_param(debug_game_mode_1, uint, 0664);
+MODULE_PARM_DESC(debug_game_mode_1, "\n debug_game_mode_1\n");
 unsigned int pq_user_value;
+unsigned int hdr_source_type = 0x1;
 
 static int wb_init_bypass_coef[24] = {
 	0, 0, 0, /* pre offset */
@@ -190,6 +204,8 @@ static int __init amvecm_load_pq_val(char *str)
 		else if (i == 3)
 			hue_post = (int)val;
 		i++;
+		if (i >= 4)
+			return 0;
 	}
 
 	return 0;
@@ -522,6 +538,8 @@ static ssize_t amvecm_vlock_show(struct class *cla,
 	len += sprintf(buf+len,
 		"echo vlock_dis_cnt_no_vf_limit val(D) > /sys/class/amvecm/vlock\n");
 	len += sprintf(buf+len,
+		"echo vlock_line_limit val(D) > /sys/class/amvecm/vlock\n");
+	len += sprintf(buf+len,
 		"echo enable > /sys/class/amvecm/vlock\n");
 	len += sprintf(buf+len,
 		"echo disable > /sys/class/amvecm/vlock\n");
@@ -593,11 +611,21 @@ static ssize_t amvecm_vlock_store(struct class *cla,
 			return -EINVAL;
 		temp_val = val;
 		sel = VLOCK_DYNAMIC_ADJUST;
+	} else if (!strncmp(parm[0], "vlock_line_limit", 17)) {
+		if (kstrtol(parm[1], 10, &val) < 0)
+			return -EINVAL;
+		temp_val = val;
+		sel = VLOCK_LINE_LIMIT;
 	} else if (!strncmp(parm[0], "vlock_dis_cnt_no_vf_limit", 25)) {
 		if (kstrtol(parm[1], 10, &val) < 0)
 			return -EINVAL;
 		temp_val = val;
 		sel = VLOCK_DIS_CNT_NO_VF_LIMIT;
+	} else if (!strncmp(parm[0], "vlock_line_limit", 16)) {
+		if (kstrtol(parm[1], 10, &val) < 0)
+			return -EINVAL;
+		temp_val = val;
+		sel = VLOCK_LINE_LIMIT;
 	} else if (!strncmp(parm[0], "enable", 6)) {
 		vecm_latch_flag |= FLAG_VLOCK_EN;
 	} else if (!strncmp(parm[0], "disable", 7)) {
@@ -653,7 +681,7 @@ void vpp_get_hist_en(void)
 	WRITE_VPP_REG(VI_HIST_GCLK_CTRL, 0xffffffff);
 	WRITE_VPP_REG_BITS(VI_HIST_CTRL, 2, VI_HIST_POW_BIT, VI_HIST_POW_WID);
 }
-
+static unsigned int vpp_luma_max;
 void vpp_get_vframe_hist_info(struct vframe_s *vf)
 {
 	unsigned int hist_height, hist_width;
@@ -815,6 +843,14 @@ void vpp_get_vframe_hist_info(struct vframe_s *vf)
 			VI_HIST_ON_BIN_62_BIT, VI_HIST_ON_BIN_62_WID);
 	vf->prop.hist.vpp_gamma[63]  = READ_VPP_REG_BITS(VI_DNLP_HIST31,
 			VI_HIST_ON_BIN_63_BIT, VI_HIST_ON_BIN_63_WID);
+	if (debug_game_mode_1 &&
+		(vpp_luma_max != vf->prop.hist.vpp_luma_max)) {
+		vf->ready_clock_hist[1] = sched_clock();
+		pr_info("vpp output done %lld us. luma_max(0x%x-->0x%x)\n",
+			vf->ready_clock_hist[1]/1000,
+			vpp_luma_max, vf->prop.hist.vpp_luma_max);
+		vpp_luma_max = vf->prop.hist.vpp_luma_max;
+	}
 }
 
 static void ioctrl_get_hdr_metadata(struct vframe_s *vf)
@@ -834,10 +870,10 @@ static void ioctrl_get_hdr_metadata(struct vframe_s *vf)
 				vf->prop.master_display_colour.luminance[1];
 		} else
 			memset(vpp_hdr_metadata_s.primaries, 0,
-					10 * sizeof(unsigned int));
+					sizeof(vpp_hdr_metadata_s.primaries));
 	} else
 		memset(vpp_hdr_metadata_s.primaries, 0,
-				10 * sizeof(unsigned int));
+				sizeof(vpp_hdr_metadata_s.primaries));
 }
 
 void vpp_demo_config(struct vframe_s *vf)
@@ -911,6 +947,10 @@ int amvecm_on_vs(
 		return 0;
 #endif
 	if (flags & CSC_FLAG_CHECK_OUTPUT) {
+		if (toggle_vf)
+			amvecm_fresh_overscan(toggle_vf);
+		else if (vf)
+			amvecm_fresh_overscan(vf);
 		/* to test if output will change */
 		return amvecm_matrix_process(
 			toggle_vf, vf, flags);
@@ -920,8 +960,14 @@ int amvecm_on_vs(
 		result = amvecm_matrix_process(toggle_vf, vf, flags);
 		if (toggle_vf)
 			ioctrl_get_hdr_metadata(toggle_vf);
-	} else
+	} else {
+		amvecm_reset_overscan();
 		result = amvecm_matrix_process(NULL, NULL, flags);
+		ve_hist_gamma_reset();
+	}
+
+	if (!is_dolby_vision_on())
+		get_hdr_source_type();
 
 	/* add some flag to trigger */
 	if (vf) {
@@ -934,12 +980,15 @@ int amvecm_on_vs(
 			vd1_contrast + vd1_contrast_offset, vf);
 
 		amvecm_color_process(
-			saturation_pre + saturation_offset
-			+ satu_shift_by_con,
+			saturation_pre + saturation_offset,
 			hue_pre, vf);
 
 		vpp_demo_config(vf);
 	}
+	if (vf)
+		amvecm_fresh_overscan(vf);
+	else
+		amvecm_reset_overscan();
 	/* todo:vlock processs only for tv chip */
 	if (is_meson_gxtvbb_cpu() ||
 		is_meson_txl_cpu() || is_meson_txlx_cpu()
@@ -989,14 +1038,20 @@ static int amvecm_release(struct inode *inode, struct file *file)
 	return 0;
 }
 static struct am_regs_s amregs_ext;
+struct ve_pq_overscan_s overscan_table[TIMING_MAX];
 
 static long amvecm_ioctl(struct file *file,
 		unsigned int cmd, unsigned long arg)
 {
 	int ret = 0;
 	void __user *argp;
+	unsigned int mem_size;
+	struct ve_pq_load_s vpp_pq_load;
+	struct ve_pq_table_s *vpp_pq_load_table = NULL;
+	int i = 0;
 
-	pr_amvecm_dbg("[amvecm..] %s: cmd_nr = 0x%x\n",
+	if (debug_amvecm & 2)
+		pr_info("[amvecm..] %s: cmd_nr = 0x%x\n",
 			__func__, _IOC_NR(cmd));
 
 	if (probe_ok == 0)
@@ -1149,10 +1204,66 @@ static long amvecm_ioctl(struct file *file,
 	case AMVECM_IOC_3D_SYNC_DIS:
 		vecm_latch_flag |= FLAG_3D_SYNC_DIS;
 		break;
+	case AMVECM_IOC_GET_OVERSCAN:
+		if (copy_from_user(&vpp_pq_load,
+				(void __user *)arg,
+				sizeof(struct ve_pq_load_s))) {
+			ret = -EFAULT;
+			pr_amvecm_dbg("[amvecm..] pq ioctl copy fail!!\n");
+			break;
+		}
+		if (!(vpp_pq_load.param_id & TABLE_NAME_OVERSCAN)) {
+			ret = -EFAULT;
+			pr_amvecm_dbg("[amvecm..] overscan ioctl param_id fail!!\n");
+			break;
+		}
+		/*check pq_table length copy_from_user*/
+		if (vpp_pq_load.length > PQ_TABLE_MAX_LENGTH) {
+			ret = -EFAULT;
+			pr_amvecm_dbg("[amvecm..] pq ioctl length check fail!!\n");
+			break;
+		}
+
+		mem_size = vpp_pq_load.length * sizeof(struct ve_pq_table_s);
+		vpp_pq_load_table = kmalloc(mem_size, GFP_KERNEL);
+		if (vpp_pq_load_table == NULL) {
+			pr_info("vpp_pq_load_table kmalloc fail!!!\n");
+			return -EFAULT;
+		}
+		argp = (void __user *)vpp_pq_load.param_ptr;
+		if (copy_from_user(vpp_pq_load_table, argp, mem_size)) {
+			pr_amvecm_dbg("[amvecm..] ovescan copy fail!!\n");
+			break;
+		}
+		for (i = 0; i < vpp_pq_load.length; i++) {
+			if (i >= TIMING_MAX)
+				break;
+			overscan_table[i].load_flag =
+				(vpp_pq_load_table[i].src_timing >> 31) & 0x1;
+			overscan_table[i].afd_enable =
+				(vpp_pq_load_table[i].src_timing >> 30) & 0x1;
+			overscan_table[i].screen_mode =
+				(vpp_pq_load_table[i].src_timing >> 24) & 0x3f;
+			overscan_table[i].source =
+				(vpp_pq_load_table[i].src_timing >> 16) & 0xff;
+			overscan_table[i].timing =
+				vpp_pq_load_table[i].src_timing & 0xffff;
+			overscan_table[i].hs =
+				vpp_pq_load_table[i].value1 & 0xffff;
+			overscan_table[i].he =
+				(vpp_pq_load_table[i].value1 >> 16) & 0xffff;
+			overscan_table[i].vs =
+				vpp_pq_load_table[i].value2 & 0xffff;
+			overscan_table[i].ve =
+				(vpp_pq_load_table[i].value2 >> 16) & 0xffff;
+		}
+		break;
 	default:
 		ret = -EINVAL;
 		break;
 	}
+	if (vpp_pq_load_table != NULL)
+	kfree(vpp_pq_load_table);
 	return ret;
 }
 #ifdef CONFIG_COMPAT
@@ -1259,6 +1370,7 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 					dnlp_parse_cmd[i].parse_string)) {
 				if (kstrtoul(parm[2], 10, &val) < 0) {
 					kfree(buf_orig);
+					kfree(stemp);
 					return -EINVAL;
 				}
 				*(dnlp_parse_cmd[i].value) = val;
@@ -1270,13 +1382,19 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 		}
 	} else if (!strcmp(parm[0], "rc")) {/*read curve*/
 		if (!strcmp(parm[1], "scurv_low")) {
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(buf_orig);
+				kfree(stemp);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
 					d_convert_str(dnlp_scurv_low[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
-			} else if (parm[2] != NULL) {
+			} else {
 				if (kstrtoul(parm[2], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
@@ -1284,16 +1402,21 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 					pr_info("error cmd\n");
 				else
 					pr_info("%d\n", dnlp_scurv_low[val]);
-			} else
-				pr_info("error cmd\n");
+			}
 		} else if (!strcmp(parm[1], "scurv_mid1")) {
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(buf_orig);
+				kfree(stemp);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
 					d_convert_str(dnlp_scurv_mid1[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
-			} else if (parm[2] != NULL) {
+			} else {
 				if (kstrtoul(parm[2], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
@@ -1301,16 +1424,21 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 					pr_info("error cmd\n");
 				else
 					pr_info("%d\n", dnlp_scurv_mid1[val]);
-			} else
+			}
+		} else if (!strcmp(parm[1], "scu v_mid2")) {
+			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-		} else if (!strcmp(parm[1], "scurv_mid2")) {
-			if (!strcmp(parm[2], "all")) {
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
 					d_convert_str(dnlp_scurv_mid2[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
-			} else if (parm[2] != NULL) {
+			} else {
 				if (kstrtoul(parm[2], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
@@ -1318,16 +1446,21 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 					pr_info("error cmd\n");
 				else
 					pr_info("%d\n", dnlp_scurv_mid2[val]);
-			} else
-				pr_info("error cmd\n");
+			}
 		} else if (!strcmp(parm[1], "scurv_hgh1")) {
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
 					d_convert_str(dnlp_scurv_hgh1[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
-			} else if (parm[2] != NULL) {
+			} else {
 				if (kstrtoul(parm[2], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
@@ -1335,16 +1468,21 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 					pr_info("error cmd\n");
 				else
 					pr_info("%d\n", dnlp_scurv_hgh1[val]);
-			} else
-				pr_info("error cmd\n");
+			}
 		} else if (!strcmp(parm[1], "scurv_hgh2")) {
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
 					d_convert_str(dnlp_scurv_hgh2[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
-			} else if (parm[2] != NULL) {
+			} else {
 				if (kstrtoul(parm[2], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
@@ -1352,16 +1490,21 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 					pr_info("error cmd\n");
 				else
 					pr_info("%d\n", dnlp_scurv_hgh2[val]);
-			} else
-				pr_info("error cmd\n");
+			}
 		} else if (!strcmp(parm[1], "gain_var_lut49")) {
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 49; i++)
 					d_convert_str(gain_var_lut49[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
-			} else if (parm[2] != NULL) {
+			} else {
 				if (kstrtoul(parm[2], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
@@ -1369,16 +1512,21 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 					pr_info("error cmd\n");
 				else
 					pr_info("%d\n", gain_var_lut49[val]);
-			} else
-				pr_info("error cmd\n");
+			}
 		} else if (!strcmp(parm[1], "wext_gain")) {
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 48; i++)
 					d_convert_str(wext_gain[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
-			} else if (parm[2] != NULL) {
+			} else {
 				if (kstrtoul(parm[2], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
@@ -1386,11 +1534,15 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 					pr_info("error cmd\n");
 				else
 					pr_info("%d\n", wext_gain[val]);
-			} else
-				pr_info("error cmd\n");
+			}
 		} else if (!strcmp(parm[1], "ve_dnlp_tgt")) {
 			/*read only curve*/
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
 					d_convert_str(ve_dnlp_tgt[i],
 						i, stemp, 4);
@@ -1399,7 +1551,12 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 				pr_info("error cmd\n");
 		} else if (!strcmp(parm[1], "GmScurve")) {
 			/*read only curve*/
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
 					d_convert_str(GmScurve[i],
 						i, stemp, 4);
@@ -1408,7 +1565,12 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 				pr_info("error cmd\n");
 		} else if (!strcmp(parm[1], "clash_curve")) {
 			/*read only curve*/
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
 					d_convert_str(clash_curve[i],
 						i, stemp, 4);
@@ -1417,7 +1579,12 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 				pr_info("error cmd\n");
 		} else if (!strcmp(parm[1], "clsh_scvbld")) {
 			/*read only curve*/
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
 					d_convert_str(clsh_scvbld[i],
 						i, stemp, 4);
@@ -1426,7 +1593,12 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 				pr_info("error cmd\n");
 		} else if (!strcmp(parm[1], "blkwht_ebld")) {
 			/*read only curve*/
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
 					d_convert_str(blkwht_ebld[i],
 						i, stemp, 4);
@@ -1435,7 +1607,12 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 				pr_info("error cmd\n");
 		} else if (!strcmp(parm[1], "vpp_histgram")) {
 			/*read only curve*/
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 64; i++)
 					d_convert_str(
 					vpp_hist_param.vpp_histgram[i],
@@ -1446,141 +1623,190 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 		}
 	} else if (!strcmp(parm[0], "wc")) {/*write curve*/
 		if (!strcmp(parm[1], "scurv_low")) {
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				str_sapr_to_d(parm[3], curve_val, 5);
 				for (i = 0; i < 65; i++)
 					dnlp_scurv_low[i] = curve_val[i];
-			} else if (parm[2] != NULL) {
+			} else {
 				if (kstrtoul(parm[2], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
 				num = val;
 				if (kstrtoul(parm[3], 10, &val) < 0) {
 					kfree(buf_orig);
+					kfree(stemp);
 					return -EINVAL;
 				}
-				if ((num > 64) || (num < 0))
+				if (num > 64)
 					pr_info("error cmd\n");
 				else
 					dnlp_scurv_low[num] = val;
 			}
 		} else if (!strcmp(parm[1], "scurv_mid1")) {
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				str_sapr_to_d(parm[3], curve_val, 5);
 				for (i = 0; i < 65; i++)
 					dnlp_scurv_mid1[i] = curve_val[i];
-			} else if (parm[2] != NULL) {
+			} else {
 				if (kstrtoul(parm[2], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
 				num = val;
 				if (kstrtoul(parm[3], 10, &val) < 0) {
 					kfree(buf_orig);
+					kfree(stemp);
 					return -EINVAL;
 				}
-				if ((num > 64) || (num < 0))
+				if (num > 64)
 					pr_info("error cmd\n");
 				else
 					dnlp_scurv_mid1[num] = val;
 			}
 		} else if (!strcmp(parm[1], "scurv_mid2")) {
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				str_sapr_to_d(parm[3], curve_val, 5);
 				for (i = 0; i < 65; i++)
 					dnlp_scurv_mid2[i] = curve_val[i];
-			} else if (parm[2] != NULL) {
+			} else {
 				if (kstrtoul(parm[2], 10, &val) < 0) {
 					kfree(buf_orig);
+					kfree(stemp);
 					return -EINVAL;
 				}
 				num = val;
 				if (kstrtoul(parm[3], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
-				if ((num > 64) || (num < 0))
+				if (num > 64)
 					pr_info("error cmd\n");
 				else
 					dnlp_scurv_mid2[num] = val;
 			}
 		} else if (!strcmp(parm[1], "scurv_hgh1")) {
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				str_sapr_to_d(parm[3], curve_val, 5);
 				for (i = 0; i < 65; i++)
 					dnlp_scurv_hgh1[i] = curve_val[i];
-			} else if (parm[2] != NULL) {
+			} else {
 				if (kstrtoul(parm[2], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
 				num = val;
 				if (kstrtoul(parm[3], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
-				if ((num > 64) || (num < 0))
+				if (num > 64)
 					pr_info("error cmd\n");
 				else
 					dnlp_scurv_hgh1[num] = val;
 			}
 		} else if (!strcmp(parm[1], "scurv_hgh2")) {
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				str_sapr_to_d(parm[3], curve_val, 5);
 				for (i = 0; i < 65; i++)
 					dnlp_scurv_hgh2[i] = curve_val[i];
-			} else if (parm[2] != NULL) {
+			} else {
 				if (kstrtoul(parm[2], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
 				num = val;
 				if (kstrtoul(parm[3], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
-				if ((num > 64) || (num < 0))
+				if (num > 64)
 					pr_info("error cmd\n");
 				else
 					dnlp_scurv_hgh2[num] = val;
 			}
 		} else if (!strcmp(parm[1], "gain_var_lut49")) {
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				str_sapr_to_d(parm[3], curve_val, 5);
 				for (i = 0; i < 49; i++)
 					gain_var_lut49[i] = curve_val[i];
-			} else if (parm[2] != NULL) {
+			} else {
 				if (kstrtoul(parm[2], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
 				num = val;
 				if (kstrtoul(parm[3], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
-				if ((num > 48) || (num < 0))
+				if (num > 48)
 					pr_info("error cmd\n");
 				else
 					gain_var_lut49[num] = val;
 			}
 		} else if (!strcmp(parm[1], "wext_gain")) {
-			if (!strcmp(parm[2], "all")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				kfree(stemp);
+				kfree(buf_orig);
+				return -EINVAL;
+			} else if (!strcmp(parm[2], "all")) {
 				str_sapr_to_d(parm[3], curve_val, 5);
 				for (i = 0; i < 48; i++)
 					wext_gain[i] = curve_val[i];
-			} else if (parm[2] != NULL) {
+			} else {
 				if (kstrtoul(parm[2], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
 				num = val;
 				if (kstrtoul(parm[3], 10, &val) < 0) {
+					kfree(stemp);
 					kfree(buf_orig);
 					return -EINVAL;
 				}
-				if ((num > 47) || (num < 0))
+				if (num > 47)
 					pr_info("error cmd\n");
 				else
 					wext_gain[num] = val;
@@ -1650,11 +1876,6 @@ static ssize_t amvecm_contrast_store(struct class *cla,
 	vd1_contrast = val;
 	/*vecm_latch_flag |= FLAG_BRI_CON;*/
 	vecm_latch_flag |= FLAG_VADJ1_CON;
-
-	if (val > 0)
-		satu_shift_by_con = val >> 3;
-	else
-		satu_shift_by_con = 0;
 	vecm_latch_flag |= FLAG_VADJ1_COLOR;
 	return count;
 }
@@ -1684,6 +1905,14 @@ static ssize_t amvecm_saturation_hue_store(struct class *cla,
 
 	ma += saturation_ma_shift;
 	mb += saturation_mb_shift;
+	if (ma > 511)
+		ma = 511;
+	if (ma < -512)
+		ma = -512;
+	if (mb > 511)
+		mb = 511;
+	if (mb < -512)
+		mb = -512;
 	mab =  ((ma & 0x3ff) << 16) | (mb & 0x3ff);
 	WRITE_VPP_REG(VPP_VADJ1_MA_MB, mab);
 	mc = (s16)((mab<<22)>>22); /* mc = -mb */
@@ -1915,7 +2144,11 @@ static ssize_t amvecm_cm2_store(struct class *cls,
 			continue;
 		parm[n++] = token;
 	}
-
+	if (n == 0) {
+		pr_info("strsep fail,parm[] uninitialized !\n");
+		kfree(buf_orig);
+		return -EINVAL;
+	}
 	if ((parm[0][0] == 'w') && parm[0][1] == 'm') {
 		if (n != 7) {
 			pr_info("read: invalid parameter\n");
@@ -2155,13 +2388,6 @@ static ssize_t amvecm_gamma_store(struct class *cls,
 	char delim1[3] = " ";
 	char delim2[2] = "\n";
 
-	/* to avoid the bellow warning message while compiling:
-	 * warning: the frame size of 1576 bytes is larger than 1024 bytes
-	 */
-	gammaR = kmalloc(256 * sizeof(unsigned short), GFP_KERNEL);
-	gammaG = kmalloc(256 * sizeof(unsigned short), GFP_KERNEL);
-	gammaB = kmalloc(256 * sizeof(unsigned short), GFP_KERNEL);
-
 	buf_orig = kstrdup(buffer, GFP_KERNEL);
 	ps = buf_orig;
 	strcat(delim1, delim2);
@@ -2172,6 +2398,26 @@ static ssize_t amvecm_gamma_store(struct class *cls,
 		if (*token == '\0')
 			continue;
 		parm[n++] = token;
+	}
+	if (n == 0) {
+		kfree(buf_orig);
+		pr_info("fail to get parm[] initialized!!!\n");
+		return count;
+	}
+
+	/* to avoid the bellow warning message while compiling:
+	 * warning: the frame size of 1576 bytes is larger than 1024 bytes
+	 */
+	gammaR = kmalloc(256 * sizeof(unsigned short), GFP_KERNEL);
+	gammaG = kmalloc(256 * sizeof(unsigned short), GFP_KERNEL);
+	gammaB = kmalloc(256 * sizeof(unsigned short), GFP_KERNEL);
+	if (!gammaR || !gammaG || !gammaB) {
+		kfree(buf_orig);
+		kfree(gammaR);
+		kfree(gammaG);
+		kfree(gammaB);
+		pr_info("malloc gammaR/G/B fail!!!\n");
+		return -EINVAL;
 	}
 
 	if ((parm[0][0] == 's') && (parm[0][1] == 'g')) {
@@ -2187,10 +2433,12 @@ static ssize_t amvecm_gamma_store(struct class *cls,
 			gamma[3] = '\0';
 			if (kstrtol(gamma, 16, &val) < 0) {
 				kfree(buf_orig);
+				kfree(gammaR);
+				kfree(gammaG);
+				kfree(gammaB);
 				return -EINVAL;
 			}
 			gammaR[i] = val;
-
 		}
 
 		switch (parm[0][2]) {
@@ -2524,7 +2772,11 @@ static ssize_t set_hdr_289lut_store(struct class *cls,
 			continue;
 		parm[n++] = token;
 	}
-
+	if ((n == 0) || !Hdr289lut) {
+		kfree(buf_orig);
+		kfree(Hdr289lut);
+		return -EINVAL;
+	}
 	memset(Hdr289lut, 0, 289 * sizeof(unsigned short));
 	gamma_count = (strlen(parm[0]) + 2) / 3;
 	if (gamma_count > 289)
@@ -2535,8 +2787,11 @@ static ssize_t set_hdr_289lut_store(struct class *cls,
 		gamma[1] = parm[0][3 * i + 1];
 		gamma[2] = parm[0][3 * i + 2];
 		gamma[3] = '\0';
-		if (kstrtol(gamma, 16, &val) < 0)
+		if (kstrtol(gamma, 16, &val) < 0) {
+			kfree(buf_orig);
+			kfree(Hdr289lut);
 			return -EINVAL;
+		}
 		Hdr289lut[i] = val;
 	}
 
@@ -3766,6 +4021,8 @@ static ssize_t amvecm_debug_store(struct class *cla,
 	parse_param_amvecm(buf_orig, (char **)&parm);
 	if (!strncmp(parm[0], "vpp_size", 8))
 		dump_vpp_size_info();
+	else if (!strncmp(parm[0], "vpp_state", 9))
+		pr_info("amvecm driver version :  %s\n", AMVECM_VER);
 	else if (!strncmp(parm[0], "wb", 2)) {
 		if (!strncmp(parm[1], "enable", 6)) {
 			amvecm_wb_enable(1);
@@ -4027,6 +4284,29 @@ static ssize_t amvecm_debug_store(struct class *cla,
 			color_mode = 0;
 		vpp_clip_config(mode_sel, color, color_mode);
 		pr_info("vpp_clip_config done!\n");
+		} else if (!strcmp(parm[0], "3dlut_set")) {
+			int *PLut3D;
+
+			PLut3D = kzalloc(14739 * sizeof(int), GFP_KERNEL);
+			if (PLut3D == NULL) {
+				kfree(buf_orig);
+				return -EINVAL;
+			}
+			vpp_lut3d_table_init(PLut3D);
+			if (!strcmp(parm[1], "enable"))
+				vpp_set_lut3d(1, 1, PLut3D, 1);
+			else if (!strcmp(parm[1], "disable"))
+				vpp_set_lut3d(0, 0, PLut3D, 0);
+			else
+				pr_info("unsupprt cmd!\n");
+			kfree(PLut3D);
+		} else if (!strcmp(parm[0], "3dlut_dump")) {
+			if (!strcmp(parm[1], "init_tab"))
+				dump_plut3d_table();
+			else if (!strcmp(parm[1], "reg_tab"))
+				dump_plut3d_reg_table();
+			else
+				pr_info("unsupprt cmd!\n");
 	} else {
 		pr_info("unsupport cmd\n");
 	}
@@ -4064,53 +4344,75 @@ static ssize_t amvecm_reg_store(struct class *cla,
 	buf_orig = kstrdup(buf, GFP_KERNEL);
 	parse_param_amvecm(buf_orig, (char **)&parm);
 	if (!strcmp(parm[0], "rv")) {
-		if (kstrtoul(parm[1], 16, &val) < 0)
+		if (kstrtoul(parm[1], 16, &val) < 0) {
+			kfree(buf_orig);
 			return -EINVAL;
+		}
 		reg_addr = val;
 		reg_val = READ_VPP_REG(reg_addr);
 		pr_info("VPU[0x%04x]=0x%08x\n", reg_addr, reg_val);
 	} else if (!strcmp(parm[0], "rc")) {
-		if (kstrtoul(parm[1], 16, &val) < 0)
+		if (kstrtoul(parm[1], 16, &val) < 0) {
+			kfree(buf_orig);
 			return -EINVAL;
+		}
 		reg_addr = val;
 		reg_val = aml_read_cbus(reg_addr);
 		pr_info("CBUS[0x%04x]=0x%08x\n", reg_addr, reg_val);
 	} else if (!strcmp(parm[0], "rh")) {
-		if (kstrtoul(parm[1], 16, &val) < 0)
+		if (kstrtoul(parm[1], 16, &val) < 0) {
+			kfree(buf_orig);
 			return -EINVAL;
+		}
 		reg_addr = val;
 		amvecm_hiu_reg_read(reg_addr, &reg_val);
 		pr_info("HIU[0x%04x]=0x%08x\n", reg_addr, reg_val);
 	} else if (!strcmp(parm[0], "wv")) {
-		if (kstrtoul(parm[1], 16, &val) < 0)
+		if (kstrtoul(parm[1], 16, &val) < 0) {
+			kfree(buf_orig);
 			return -EINVAL;
+		}
 		reg_addr = val;
-		if (kstrtoul(parm[2], 16, &val) < 0)
+		if (kstrtoul(parm[2], 16, &val) < 0) {
+			kfree(buf_orig);
 			return -EINVAL;
+		}
 		reg_val = val;
 		WRITE_VPP_REG(reg_addr, reg_val);
 	} else if (!strcmp(parm[0], "wc")) {
-		if (kstrtoul(parm[1], 16, &val) < 0)
+		if (kstrtoul(parm[1], 16, &val) < 0) {
+			kfree(buf_orig);
 			return -EINVAL;
+		}
 		reg_addr = val;
-		if (kstrtoul(parm[2], 16, &val) < 0)
+		if (kstrtoul(parm[2], 16, &val) < 0) {
+			kfree(buf_orig);
 			return -EINVAL;
+		}
 		reg_val = val;
 		aml_write_cbus(reg_addr, reg_val);
 	} else if (!strcmp(parm[0], "wh")) {
-		if (kstrtoul(parm[1], 16, &val) < 0)
+		if (kstrtoul(parm[1], 16, &val) < 0) {
+			kfree(buf_orig);
 			return -EINVAL;
+		}
 		reg_addr = val;
-		if (kstrtoul(parm[2], 16, &val) < 0)
+		if (kstrtoul(parm[2], 16, &val) < 0) {
+			kfree(buf_orig);
 			return -EINVAL;
+		}
 		reg_val = val;
 		amvecm_hiu_reg_write(reg_addr, reg_val);
 	} else if (parm[0][0] == 'd') {
-		if (kstrtoul(parm[1], 16, &val) < 0)
+		if (kstrtoul(parm[1], 16, &val) < 0) {
+			kfree(buf_orig);
 			return -EINVAL;
+		}
 		reg_addr = val;
-		if (kstrtoul(parm[2], 16, &val) < 0)
+		if (kstrtoul(parm[2], 16, &val) < 0) {
+			kfree(buf_orig);
 			return -EINVAL;
+		}
 		for (i = 0; i < val; i++) {
 			if (parm[0][1] == 'v')
 				reg_val = READ_VPP_REG(reg_addr+i);
@@ -4119,14 +4421,31 @@ static ssize_t amvecm_reg_store(struct class *cla,
 			else if (parm[0][1] == 'h')
 				amvecm_hiu_reg_read((reg_addr+i),
 					&reg_val);
+			else {
+				pr_info("unsupprt cmd!\n");
+				kfree(buf_orig);
+				return -EINVAL;
+			}
 			pr_info("REG[0x%04x]=0x%08x\n", (reg_addr+i), reg_val);
 		}
 	} else
 		pr_info("unsupprt cmd!\n");
-
+	kfree(buf_orig);
 	return count;
 }
 
+static ssize_t amvecm_get_hdr_type_show(struct class *cla,
+		struct class_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%x\n", hdr_source_type);
+}
+
+static ssize_t amvecm_get_hdr_type_store(struct class *cls,
+		 struct class_attribute *attr,
+		 const char *buffer, size_t count)
+{
+	return count;
+}
 
 /* #if (MESON_CPU_TYPE == MESON_CPU_TYPE_MESONG9TV) */
 void init_pq_setting(void)
@@ -4325,6 +4644,8 @@ static struct class_attribute amvecm_class_attrs[] = {
 		amvecm_pq_user_show, amvecm_pq_user_store),
 	__ATTR(pq_reg_rw, 0644,
 		amvecm_write_reg_show, amvecm_write_reg_store),
+	__ATTR(get_hdr_type, 0644,
+		amvecm_get_hdr_type_show, amvecm_get_hdr_type_store),
 	__ATTR_NULL
 };
 
@@ -4385,6 +4706,20 @@ static void aml_vecm_dt_parse(struct platform_device *pdev)
 			pr_info("Can't find  wb_sel.\n");
 		else
 			video_rgb_ogo_xvy_mtx = val;
+		/*hdr:cfg:osd_100*/
+		ret = of_property_read_u32(node, "cfg_en_osd_100", &val);
+		if (ret) {
+			hdr_set_cfg_osd_100(0);
+			pr_info("hdr:Can't find  cfg_en_osd_100.\n");
+
+		} else {
+			hdr_set_cfg_osd_100((int)val);
+		}
+		ret = of_property_read_u32(node, "tx_op_color_primary", &val);
+		if (ret)
+			pr_info("Can't find  tx_op_color_primary.\n");
+		else
+			tx_op_color_primary = val;
 	}
 	/* init module status */
 	amvecm_wb_init(wb_en);
@@ -4483,7 +4818,7 @@ static int aml_vecm_probe(struct platform_device *pdev)
 		/* amvecm_vpp_mtx_debug(mtx_sel_dbg, 1);*/
 	} else if (is_meson_txhd_cpu())
 		vpp_set_10bit_datapath1();
-	else if (is_meson_g12a_cpu())
+	else if (is_meson_g12a_cpu() || is_meson_g12b_cpu())
 		vpp_set_12bit_datapath_g12a();
 	memset(&vpp_hist_param.vpp_histgram[0],
 		0, sizeof(unsigned short) * 64);
@@ -4500,9 +4835,18 @@ static int aml_vecm_probe(struct platform_device *pdev)
 	/*config vlock mode*/
 	/*todo:txlx & g9tv support auto pll,*/
 	/*but support not good,need vlsi support optimize*/
-	if (is_meson_txlx_cpu() || is_meson_txhd_cpu())
+	if (is_meson_txhd_cpu())
 		vlock_mode = VLOCK_MODE_MANUAL_PLL;
-	else
+	else if (is_meson_txlx_cpu() && !is_meson_txlx_package_962E()) {
+		struct vinfo_s *vinfo = get_current_vinfo();
+
+		if ((vinfo->fr_adj_type != VOUT_FR_ADJ_HDMI) &&
+			(vinfo->width <= 1920))
+			vlock_mode = VLOCK_MODE_MANUAL_SOFT_ENC;
+		else
+			vlock_mode = VLOCK_MODE_MANUAL_PLL;
+
+	} else
 		vlock_mode = VLOCK_MODE_MANUAL_PLL;
 	if (is_meson_gxtvbb_cpu() ||
 		is_meson_txl_cpu() || is_meson_txlx_cpu()
@@ -4510,7 +4854,9 @@ static int aml_vecm_probe(struct platform_device *pdev)
 		vlock_en = 1;
 	else
 		vlock_en = 0;
+	hdr_init(&amvecm_dev.hdr_d);
 	aml_vecm_dt_parse(pdev);
+
 	probe_ok = 1;
 	pr_info("%s: ok\n", __func__);
 	return 0;
@@ -4539,6 +4885,8 @@ fail_alloc_region:
 static int __exit aml_vecm_remove(struct platform_device *pdev)
 {
 	struct amvecm_dev_s *devp = &amvecm_dev;
+
+	hdr_exit();
 	device_destroy(devp->clsp, devp->devno);
 	cdev_del(&devp->cdev);
 	class_destroy(devp->clsp);
@@ -4575,6 +4923,7 @@ static void amvecm_shutdown(struct platform_device *pdev)
 {
 	struct amvecm_dev_s *devp = &amvecm_dev;
 
+	hdr_exit();
 	ve_disable_dnlp();
 	amcm_disable();
 	WRITE_VPP_REG(VPP_VADJ_CTRL, 0x0);
@@ -4623,7 +4972,7 @@ static int __init aml_vecm_init(void)
 	pr_info("%s:module init\n", __func__);
 	/* remap the hiu bus */
 	if (is_meson_txlx_cpu() || is_meson_txhd_cpu() ||
-		is_meson_g12a_cpu())
+		is_meson_g12a_cpu() || is_meson_g12b_cpu())
 		hiu_reg_base = 0xff63c000;
 	else
 		hiu_reg_base = 0xc883c000;
@@ -4646,6 +4995,7 @@ static void __exit aml_vecm_exit(void)
 module_init(aml_vecm_init);
 module_exit(aml_vecm_exit);
 
+MODULE_VERSION(AMVECM_VER);
 MODULE_DESCRIPTION("AMLOGIC amvecm driver");
 MODULE_LICENSE("GPL");
 

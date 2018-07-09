@@ -125,6 +125,11 @@ static inline bool is_meson_gxl_package_905M2(void)
 	return is_meson_gxl_cpu() && package_id_is(0xe0);
 }
 
+static inline bool is_meson_gxl_package_805X(void)
+{
+	return is_meson_gxl_cpu() && package_id_is(0x30);
+}
+
 static inline bool is_meson_gxm_cpu(void)
 {
 	return get_cpu_type() == MESON_CPU_MAJOR_ID_GXM;
@@ -158,6 +163,11 @@ static inline bool is_meson_txhd_cpu(void)
 static inline bool is_meson_g12a_cpu(void)
 {
 	return get_cpu_type() == MESON_CPU_MAJOR_ID_G12A;
+}
+
+static inline bool is_meson_g12b_cpu(void)
+{
+	return get_cpu_type() == MESON_CPU_MAJOR_ID_G12B;
 }
 
 static inline bool cpu_after_eq(unsigned int id)

@@ -108,8 +108,12 @@ static void amlogic_new_usb3phy_shutdown(struct usb_phy *x)
 void aml_new_usb_v2_init(void)
 {
 	union usb_r5_v2 r5 = {.d32 = 0};
-	unsigned long reg_addr = (unsigned long)
-		g_phy_v2->usb2_phy_cfg;
+	unsigned long reg_addr;
+
+	if (!g_phy_v2)
+		return;
+
+	reg_addr = (unsigned long)g_phy_v2->usb2_phy_cfg;
 
 	r5.d32 = readl(usb_new_aml_regs_v2.usb_r_v2[5]);
 	if (r5.b.iddig_curr == 0) {
@@ -263,7 +267,7 @@ static int amlogic_new_usb3_init(struct usb_phy *x)
 	}
 
 	r1.d32 = readl(usb_new_aml_regs_v2.usb_r_v2[1]);
-	r1.b.u3h_fladj_30mhz_reg = 0x26;
+	r1.b.u3h_fladj_30mhz_reg = 0x20;
 	writel(r1.d32, usb_new_aml_regs_v2.usb_r_v2[1]);
 
 	r5.d32 = readl(usb_new_aml_regs_v2.usb_r_v2[5]);
@@ -287,7 +291,7 @@ static int amlogic_new_usb3_init(struct usb_phy *x)
 		udelay(2);
 		r1.d32 = readl(usb_new_aml_regs_v2.usb_r_v2[1]);
 		r1.b.u3h_host_port_power_control_present = 1;
-		r1.b.u3h_fladj_30mhz_reg = 0x26;
+		r1.b.u3h_fladj_30mhz_reg = 0x20;
 		r1.b.p30_pcs_tx_swing_full = 127;
 		writel(r1.d32, usb_new_aml_regs_v2.usb_r_v2[1]);
 		udelay(2);

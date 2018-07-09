@@ -95,6 +95,10 @@
 #define MTX_BYPASS_RGB_OGO			(1 << 0)
 #define MTX_RGB2YUVL_RGB_OGO		(1 << 1)
 
+#define SDR_SOURCE    (1 << 0)
+#define HDR10_SOURCE  (1 << 1)
+#define HLG_SOURCE    (1 << 2)
+
 enum pq_table_name_e {
 	TABLE_NAME_SHARPNESS0 = 0x1,/*in vpp*/
 	TABLE_NAME_SHARPNESS1 = 0x2,/*in vpp*/
@@ -115,13 +119,16 @@ enum pq_table_name_e {
 	TABLE_NAME_XVYCC = 0x10000,	/*in vpp*/
 	TABLE_NAME_HDR = 0x20000,	/*in vpp*/
 	TABLE_NAME_DOLBY_VISION = 0x40000,/*in vpp*/
-	TABLE_NAME_RESERVED1 = 0x80000,
-	TABLE_NAME_RESERVED2 = 0x100000,
-	TABLE_NAME_RESERVED3 = 0x200000,
-	TABLE_NAME_RESERVED4 = 0x400000,
-	TABLE_NAME_RESERVED5 = 0x800000,
+	TABLE_NAME_OVERSCAN = 0x80000,
+	TABLE_NAME_RESERVED1 = 0x100000,
+	TABLE_NAME_RESERVED2 = 0x200000,
+	TABLE_NAME_RESERVED3 = 0x400000,
+	TABLE_NAME_RESERVED4 = 0x800000,
 	TABLE_NAME_MAX,
 };
+
+/*check pq_table length copy_from_user*/
+#define PQ_TABLE_MAX_LENGTH		10000
 
 #define _VE_CM  'C'
 
@@ -153,6 +160,78 @@ enum pq_table_name_e {
 /*VPP.3D-SYNC IOCTL command list*/
 #define AMVECM_IOC_3D_SYNC_EN  _IO(_VE_CM, 0x49)
 #define AMVECM_IOC_3D_SYNC_DIS _IO(_VE_CM, 0x50)
+
+struct ve_pq_load_s {
+	enum pq_table_name_e param_id;
+	unsigned int length;
+	void *param_ptr;
+	void *reserved;
+};
+
+struct ve_pq_table_s {
+	unsigned int src_timing;
+	unsigned int value1;
+	unsigned int value2;
+	unsigned int reserved1;
+	unsigned int reserved2;
+};
+
+#define AMVECM_IOC_GET_OVERSCAN  _IOR(_VE_CM, 0x52, struct ve_pq_load_s)
+
+enum ve_source_input_e {
+	SOURCE_INVALID = -1,
+	SOURCE_TV = 0,
+	SOURCE_AV1,
+	SOURCE_AV2,
+	SOURCE_YPBPR1,
+	SOURCE_YPBPR2,
+	SOURCE_HDMI1,
+	SOURCE_HDMI2,
+	SOURCE_HDMI3,
+	SOURCE_HDMI4,
+	SOURCE_VGA,
+	SOURCE_MPEG,
+	SOURCE_DTV,
+	SOURCE_SVIDEO,
+	SOURCE_IPTV,
+	SOURCE_DUMMY,
+	SOURCE_SPDIF,
+	SOURCE_ADTV,
+	SOURCE_MAX,
+};
+
+enum ve_pq_timing_e {
+	TIMING_SD = 0,
+	TIMING_HD,
+	TIMING_FHD,
+	TIMING_UHD,
+	TIMING_MAX,
+};
+
+/*overscan:
+ *length 0~31bit :number of crop;
+ *src_timing: bit31: on: load/save all crop
+			  bit31: off: load one according to timing*
+			  bit30: AFD_enable: 1 -> on; 0 -> off*
+			  screen mode: bit24~bit29*
+			  source: bit16~bit23 -> source*
+			  timing: bit0~bit15 -> sd/hd/fhd/uhd*
+ *value1: 0~15bit hs   16~31bit he*
+ *value2: 0~15bit vs   16~31bit ve*
+ */
+struct ve_pq_overscan_s {
+	unsigned int load_flag;
+	unsigned int afd_enable;
+	unsigned int screen_mode;
+	enum ve_source_input_e source;
+	enum ve_pq_timing_e timing;
+	unsigned int hs;
+	unsigned int he;
+	unsigned int vs;
+	unsigned int ve;
+};
+
+extern struct ve_pq_overscan_s overscan_table[TIMING_MAX];
 
 #define _DI_	'D'
 
@@ -220,6 +299,7 @@ static inline uint32_t READ_VPP_REG_BITS(uint32_t reg,
 
 extern signed int vd1_brightness, vd1_contrast;
 extern bool gamma_en;
+extern unsigned int hdr_source_type;
 
 #define CSC_FLAG_TOGGLE_FRAME	1
 #define CSC_FLAG_CHECK_OUTPUT	2
@@ -249,5 +329,16 @@ extern int metadata_read_u32(uint32_t *value);
 extern int metadata_wait(struct vframe_s *vf);
 extern int metadata_sync(uint32_t frame_id, uint64_t pts);
 extern void amvecm_wakeup_queue(void);
+
+#ifndef CONFIG_AMLOGIC_MEDIA_VSYNC_RDMA
+#define VSYNC_WR_MPEG_REG(adr, val) WRITE_VPP_REG(adr, val)
+#define VSYNC_RD_MPEG_REG(adr) READ_VPP_REG(adr)
+#define VSYNC_WR_MPEG_REG_BITS(adr, val, start, len) \
+	WRITE_VPP_REG_BITS(adr, val, start, len)
+#else
+extern int VSYNC_WR_MPEG_REG_BITS(u32 adr, u32 val, u32 start, u32 len);
+extern u32 VSYNC_RD_MPEG_REG(u32 adr);
+extern int VSYNC_WR_MPEG_REG(u32 adr, u32 val);
+#endif
 #endif /* AMVECM_H */
 

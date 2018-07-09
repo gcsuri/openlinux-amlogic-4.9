@@ -720,6 +720,7 @@ __acquires(bitlock)
 	}
 
 	ext4_unlock_group(sb, grp);
+	ext4_commit_super(sb, 1);
 	ext4_handle_error(sb);
 	/*
 	 * We only get here in the ERRORS_RO case; relocking the group
@@ -1027,9 +1028,7 @@ void ext4_clear_inode(struct inode *inode)
 		jbd2_free_inode(EXT4_I(inode)->jinode);
 		EXT4_I(inode)->jinode = NULL;
 	}
-#ifdef CONFIG_EXT4_FS_ENCRYPTION
-	fscrypt_put_encryption_info(inode, NULL);
-#endif
+	fscrypt_put_encryption_info(inode);
 }
 
 static struct inode *ext4_nfs_get_inode(struct super_block *sb,
@@ -1130,7 +1129,8 @@ static int ext4_set_context(struct inode *inode, const void *ctx, size_t len,
 			ext4_clear_inode_state(inode,
 					EXT4_STATE_MAY_INLINE_DATA);
 			/*
-			 * Update inode->i_flags - e.g. S_DAX may get disabled
+			 * Update inode->i_flags - S_ENCRYPTED will be enabled,
+			 * S_DAX may be disabled
 			 */
 			ext4_set_inode_flags(inode);
 		}
@@ -1151,7 +1151,10 @@ retry:
 				    ctx, len, 0);
 	if (!res) {
 		ext4_set_inode_flag(inode, EXT4_INODE_ENCRYPT);
-		/* Update inode->i_flags - e.g. S_DAX may get disabled */
+		/*
+		 * Update inode->i_flags - S_ENCRYPTED will be enabled,
+		 * S_DAX may be disabled
+		 */
 		ext4_set_inode_flags(inode);
 		res = ext4_mark_inode_dirty(handle, inode);
 		if (res)
@@ -1166,7 +1169,7 @@ retry:
 	return res;
 }
 
-static int ext4_dummy_context(struct inode *inode)
+static bool ext4_dummy_context(struct inode *inode)
 {
 	return DUMMY_ENCRYPTION_ENABLED(EXT4_SB(inode->i_sb));
 }
@@ -1182,13 +1185,8 @@ static const struct fscrypt_operations ext4_cryptops = {
 	.get_context		= ext4_get_context,
 	.set_context		= ext4_set_context,
 	.dummy_context		= ext4_dummy_context,
-	.is_encrypted		= ext4_encrypted_inode,
 	.empty_dir		= ext4_empty_dir,
 	.max_namelen		= ext4_max_namelen,
-};
-#else
-static const struct fscrypt_operations ext4_cryptops = {
-	.is_encrypted		= ext4_encrypted_inode,
 };
 #endif
 
@@ -2272,6 +2270,8 @@ static int ext4_check_descriptors(struct super_block *sb,
 			ext4_msg(sb, KERN_ERR, "ext4_check_descriptors: "
 				 "Block bitmap for group %u overlaps "
 				 "superblock", i);
+			if (!(sb->s_flags & MS_RDONLY))
+				return 0;
 		}
 		if (block_bitmap < first_block || block_bitmap > last_block) {
 			ext4_msg(sb, KERN_ERR, "ext4_check_descriptors: "
@@ -2284,6 +2284,8 @@ static int ext4_check_descriptors(struct super_block *sb,
 			ext4_msg(sb, KERN_ERR, "ext4_check_descriptors: "
 				 "Inode bitmap for group %u overlaps "
 				 "superblock", i);
+			if (!(sb->s_flags & MS_RDONLY))
+				return 0;
 		}
 		if (inode_bitmap < first_block || inode_bitmap > last_block) {
 			ext4_msg(sb, KERN_ERR, "ext4_check_descriptors: "
@@ -2296,6 +2298,8 @@ static int ext4_check_descriptors(struct super_block *sb,
 			ext4_msg(sb, KERN_ERR, "ext4_check_descriptors: "
 				 "Inode table for group %u overlaps "
 				 "superblock", i);
+			if (!(sb->s_flags & MS_RDONLY))
+				return 0;
 		}
 		if (inode_table < first_block ||
 		    inode_table + sbi->s_itb_per_group - 1 > last_block) {
@@ -3919,7 +3923,9 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_op = &ext4_sops;
 	sb->s_export_op = &ext4_export_ops;
 	sb->s_xattr = ext4_xattr_handlers;
+#ifdef CONFIG_EXT4_FS_ENCRYPTION
 	sb->s_cop = &ext4_cryptops;
+#endif
 #ifdef CONFIG_QUOTA
 	sb->dq_op = &ext4_quota_operations;
 	if (ext4_has_feature_quota(sb))

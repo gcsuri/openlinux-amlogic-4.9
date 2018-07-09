@@ -139,6 +139,9 @@ static irqreturn_t aml_tdm_ddr_isr(int irq, void *devid)
 {
 	struct snd_pcm_substream *substream = (struct snd_pcm_substream *)devid;
 
+	if (!snd_pcm_running(substream))
+		return IRQ_HANDLED;
+
 	snd_pcm_period_elapsed(substream);
 
 	return IRQ_HANDLED;
@@ -314,6 +317,7 @@ static snd_pcm_uframes_t aml_tdm_pointer(struct snd_pcm_substream *substream)
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct aml_tdm *p_tdm = runtime->private_data;
 	unsigned int addr, start_addr;
+	snd_pcm_uframes_t frames;
 
 	start_addr = runtime->dma_addr;
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
@@ -321,7 +325,11 @@ static snd_pcm_uframes_t aml_tdm_pointer(struct snd_pcm_substream *substream)
 	else
 		addr = aml_toddr_get_position(p_tdm->tddr);
 
-	return bytes_to_frames(runtime, addr - start_addr);
+	frames = bytes_to_frames(runtime, addr - start_addr);
+	if (frames > runtime->buffer_size)
+		frames = 0;
+
+	return frames;
 }
 
 static int aml_tdm_mmap(struct snd_pcm_substream *substream,
@@ -399,8 +407,10 @@ static int aml_dai_tdm_prepare(struct snd_pcm_substream *substream,
 
 		/* share buffer prepare */
 		if (p_tdm->chipinfo &&
-			p_tdm->chipinfo->same_src_fn) {
-			if (p_tdm->samesource_sel >= 0)
+			p_tdm->chipinfo->same_src_fn
+			&& (p_tdm->samesource_sel >= 0)
+			&& (aml_check_sharebuffer_valid(p_tdm->fddr,
+					p_tdm->samesource_sel))) {
 				sharebuffer_prepare(substream,
 					fr, p_tdm->samesource_sel);
 		}
@@ -492,8 +502,10 @@ static int aml_dai_tdm_trigger(struct snd_pcm_substream *substream, int cmd,
 	/* share buffer trigger */
 	if ((substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
 		&& p_tdm->chipinfo
-		&& p_tdm->chipinfo->same_src_fn) {
-		if (p_tdm->samesource_sel >= 0)
+		&& p_tdm->chipinfo->same_src_fn
+		&& (p_tdm->samesource_sel >= 0)
+		&& (aml_check_sharebuffer_valid(p_tdm->fddr,
+				p_tdm->samesource_sel))) {
 			sharebuffer_trigger(cmd, p_tdm->samesource_sel);
 	}
 
@@ -542,6 +554,7 @@ static int pcm_setting_init(struct pcm_setting *setting, unsigned int rate,
 			unsigned int channels)
 {
 	unsigned int ratio = 0;
+
 	setting->lrclk = rate;
 	setting->bclk_lrclk_ratio = setting->slots * setting->slot_width;
 	setting->bclk = setting->lrclk * setting->bclk_lrclk_ratio;
@@ -568,7 +581,7 @@ static int aml_tdm_set_lanes(struct aml_tdm *p_tdm,
 	unsigned int set_num = 0;
 	unsigned int i;
 
-	pr_info("asoc debug: %d-%d\n", channels, setting->slots);
+	pr_debug("asoc channels:%d, slots:%d\n", channels, setting->slots);
 
 	swap_val = 0;
 	// calc lanes by channels and slots
@@ -686,7 +699,9 @@ static int aml_dai_tdm_hw_params(struct snd_pcm_substream *substream,
 	if ((substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
 		&& p_tdm->chipinfo
 		&& (p_tdm->chipinfo->same_src_fn)
-		&& (p_tdm->samesource_sel >= 0)) {
+		&& (p_tdm->samesource_sel >= 0)
+		&& (aml_check_sharebuffer_valid(p_tdm->fddr,
+				p_tdm->samesource_sel))) {
 		int mux = 0, ratio = 0;
 
 			sharebuffer_get_mclk_fs_ratio(p_tdm->samesource_sel,
@@ -715,8 +730,9 @@ static int aml_dai_tdm_hw_free(struct snd_pcm_substream *substream,
 	if ((substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
 		&& p_tdm->chipinfo
 		&& p_tdm->chipinfo->same_src_fn
-		&& fr) {
-		if (p_tdm->samesource_sel >= 0)
+		&& (p_tdm->samesource_sel >= 0)
+		&& fr
+		&& (aml_check_sharebuffer_valid(fr, p_tdm->samesource_sel))) {
 			sharebuffer_free(substream,
 				fr, p_tdm->samesource_sel);
 	}
@@ -825,7 +841,7 @@ static int aml_dai_set_clkdiv(struct snd_soc_dai *cpu_dai,
 	struct aml_tdm *p_tdm = snd_soc_dai_get_drvdata(cpu_dai);
 	unsigned int mclk_ratio;
 
-	pr_info("aml_dai_set_clkdiv, div %d, clksel(%d)\n",
+	pr_debug("aml_dai_set_clkdiv, div %d, clksel(%d)\n",
 			div, p_tdm->clk_sel);
 
 	p_tdm->setting.sysclk_bclk_ratio = div;

@@ -31,20 +31,22 @@
 #include "../tvin_frontend.h"
 //#include "hdmirx_repeater.h"
 //#include "hdmi_rx_pktinfo.h"
-//#include "hdmi_rx_edid.h"
+#include "hdmi_rx_edid.h"
 
 
-#define RX_VER0 "ver.2018-04-11"
+#define RX_VER0 "ver.2018/06/21"
 /*
  *
  *
  *
  *
  */
-#define RX_VER1 "ver.2018/04/12"
-
-
-
+#define RX_VER1 "ver.2018/06/07"
+/*
+ *
+ *
+ */
+#define RX_VER2 "ver.2018/06/27"
 
 
 /* 50ms timer for hdmirx main loop (HDMI_STATE_CHECK_FREQ is 20) */
@@ -214,11 +216,11 @@ struct rx_video_info {
 	/** AVI Y1-0, video format */
 	uint8_t colorspace;
 	/** AVI VIC6-0, video identification code */
-	uint8_t hw_vic;
+	enum hdmi_vic_e hw_vic;
 	/** AVI PR3-0, pixel repetition factor */
 	uint8_t repeat;
 	/* for sw info */
-	uint8_t sw_vic;
+	enum hdmi_vic_e sw_vic;
 	uint8_t sw_dvi;
 	unsigned int it_content;
 	/** AVI Q1-0, RGB quantization range */
@@ -296,7 +298,9 @@ struct aud_info_s {
 	int sample_frequency;
 	int sample_size;
 	int coding_extension;
-	int channel_allocation;
+	int auds_ch_alloc;
+	int auds_layout;
+
 	/*
 	 *int down_mix_inhibit;
 	 *int level_shift_value;
@@ -391,6 +395,7 @@ extern struct device *hdmirx_dev;
 extern struct rx_s rx;
 extern struct reg_map reg_maps[MAP_ADDR_MODULE_NUM];
 extern void rx_tasklet_handler(unsigned long arg);
+extern void skip_frame(unsigned int cnt);
 
 
 /* reg */
@@ -419,11 +424,12 @@ extern bool en_4096_2_3840;
 extern int en_4k_2_2k;
 extern bool hdmi_cec_en;
 extern int hdmi_yuv444_enable;
-extern int skip_frame_cnt;
+extern int vdin_drop_frame_cnt;
 /* debug */
 extern bool hdcp_enable;
 extern int log_level;
 extern int sm_pause;
+extern int suspend_pddq_sel;
 extern int rx_set_global_variable(const char *buf, int size);
 extern void rx_get_global_variable(const char *buf);
 extern int rx_pr(const char *fmt, ...);
@@ -461,4 +467,5 @@ extern unsigned int *pd_fifo_buf;
 extern int External_Mute(int mute_flag);
 extern void vdac_enable(bool on, unsigned int module_sel);
 extern int rx_is_hdcp22_support(void);
+extern int hdmirx_get_connect_info(void);
 #endif

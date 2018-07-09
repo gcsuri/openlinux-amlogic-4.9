@@ -85,13 +85,16 @@ static int lcd_set_current_vmode(enum vmode_e mode)
 
 	mutex_lock(&lcd_drv->power_mutex);
 
-	if (!(mode & VMODE_INIT_BIT_MASK)) {
-		if (VMODE_LCD == (mode & VMODE_MODE_BIT_MASK))
+	if (VMODE_LCD == (mode & VMODE_MODE_BIT_MASK)) {
+		if (mode & VMODE_INIT_BIT_MASK) {
+			lcd_clk_gate_switch(1);
+		} else {
 			aml_lcd_notifier_call_chain(LCD_EVENT_POWER_ON, NULL);
-		else
-			ret = -EINVAL;
-	} else
-		lcd_clk_gate_switch(1);
+			lcd_if_enable_retry(lcd_drv->lcd_config);
+		}
+	} else {
+		ret = -EINVAL;
+	}
 
 	lcd_drv->lcd_status |= LCD_STATUS_VMODE_ACTIVE;
 	mutex_unlock(&lcd_drv->power_mutex);
@@ -340,18 +343,14 @@ static int lcd_resume(void)
 			queue_work(lcd_drv->workqueue,
 				&(lcd_drv->lcd_resume_work));
 		} else {
-			mutex_lock(&lcd_drv->power_mutex);
-			LCDPR("Warning: no lcd workqueue\n");
-			lcd_resume_flag = 1;
-			aml_lcd_notifier_call_chain(LCD_EVENT_POWER_ON, NULL);
-			LCDPR("%s finished\n", __func__);
-			mutex_unlock(&lcd_drv->power_mutex);
+			schedule_work(&(lcd_drv->lcd_resume_work));
 		}
 	} else {
 		mutex_lock(&lcd_drv->power_mutex);
 		LCDPR("directly lcd late resume\n");
 		lcd_resume_flag = 1;
 		aml_lcd_notifier_call_chain(LCD_EVENT_POWER_ON, NULL);
+		lcd_if_enable_retry(lcd_drv->lcd_config);
 		LCDPR("%s finished\n", __func__);
 		mutex_unlock(&lcd_drv->power_mutex);
 	}
@@ -436,6 +435,26 @@ static void lcd_tablet_vinfo_update(void)
 		vinfo->video_clk = pconf->lcd_timing.lcd_clk;
 		vinfo->htotal = pconf->lcd_basic.h_period;
 		vinfo->vtotal = pconf->lcd_basic.v_period;
+		switch (pconf->lcd_timing.fr_adjust_type) {
+		case 0:
+			vinfo->fr_adj_type = VOUT_FR_ADJ_CLK;
+			break;
+		case 1:
+			vinfo->fr_adj_type = VOUT_FR_ADJ_HTOTAL;
+			break;
+		case 2:
+			vinfo->fr_adj_type = VOUT_FR_ADJ_VTOTAL;
+			break;
+		case 3:
+			vinfo->fr_adj_type = VOUT_FR_ADJ_COMBO;
+			break;
+		case 4:
+			vinfo->fr_adj_type = VOUT_FR_ADJ_HDMI;
+			break;
+		default:
+			vinfo->fr_adj_type = VOUT_FR_ADJ_NONE;
+			break;
+		}
 
 		lcd_hdr_vinfo_update();
 	}
@@ -475,6 +494,7 @@ static void lcd_tablet_vinfo_update_default(void)
 		vinfo->video_clk = 0;
 		vinfo->htotal = h_total;
 		vinfo->vtotal = v_total;
+		vinfo->fr_adj_type = VOUT_FR_ADJ_NONE;
 	}
 }
 
@@ -580,10 +600,10 @@ static void lcd_config_print(struct lcd_config_s *pconf)
 			pconf->lcd_control.mipi_config->operation_mode_display);
 		LCDPR("video_mode_type = %d\n",
 			pconf->lcd_control.mipi_config->video_mode_type);
-		LCDPR("clk_lp_continuous = %d\n",
-			pconf->lcd_control.mipi_config->clk_lp_continuous);
-		LCDPR("phy_stop_wait = %d\n",
-			pconf->lcd_control.mipi_config->phy_stop_wait);
+		LCDPR("clk_always_hs = %d\n",
+			pconf->lcd_control.mipi_config->clk_always_hs);
+		LCDPR("phy_switch = %d\n",
+			pconf->lcd_control.mipi_config->phy_switch);
 		LCDPR("extern_init = %d\n",
 			pconf->lcd_control.mipi_config->extern_init);
 	}
@@ -660,6 +680,7 @@ static int lcd_config_load_from_dts(struct lcd_config_s *pconf,
 	}
 	ret = of_property_read_u32_array(child, "range_setting", &para[0], 6);
 	if (ret) {
+		LCDPR("no range_setting\n");
 		pconf->lcd_basic.h_period_min = pconf->lcd_basic.h_period;
 		pconf->lcd_basic.h_period_max = pconf->lcd_basic.h_period;
 		pconf->lcd_basic.v_period_min = pconf->lcd_basic.v_period;
@@ -839,9 +860,9 @@ static int lcd_config_load_from_dts(struct lcd_config_s *pconf,
 				= para[4];
 			pconf->lcd_control.mipi_config->video_mode_type
 				= para[5];
-			pconf->lcd_control.mipi_config->clk_lp_continuous
+			pconf->lcd_control.mipi_config->clk_always_hs
 				= para[6];
-			pconf->lcd_control.mipi_config->phy_stop_wait
+			pconf->lcd_control.mipi_config->phy_switch
 				= para[7];
 		}
 

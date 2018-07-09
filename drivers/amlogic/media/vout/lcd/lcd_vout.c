@@ -79,7 +79,6 @@ static struct ttl_config_s lcd_ttl_config = {
 };
 
 static struct lvds_config_s lcd_lvds_config = {
-	.lvds_vswing = 1,
 	.lvds_repack = 1,
 	.dual_port = 0,
 	.pn_swap = 0,
@@ -88,6 +87,8 @@ static struct lvds_config_s lcd_lvds_config = {
 	.port_sel = 0,
 	.phy_vswing = LVDS_PHY_VSWING_DFT,
 	.phy_preem = LVDS_PHY_PREEM_DFT,
+	.phy_clk_vswing = LVDS_PHY_CLK_VSWING_DFT,
+	.phy_clk_preem = LVDS_PHY_CLK_PREEM_DFT,
 };
 
 static struct vbyone_config_s lcd_vbyone_config = {
@@ -119,15 +120,13 @@ static struct dsi_config_s lcd_mipi_config = {
 	.operation_mode_init = 1,    /* 0=video mode, 1=command mode */
 	.operation_mode_display = 0, /* 0=video mode, 1=command mode */
 	.video_mode_type = 2, /* 0=sync_pulse, 1=sync_event, 2=burst */
-	.clk_lp_continuous = 1, /* 0=stop, 1=continue */
-	.phy_stop_wait = 0,   /* 0=auto, 1=standard, 2=slow */
+	.clk_always_hs = 1, /* 0=disable, 1=enable */
+	.phy_switch = 0,   /* 0=auto, 1=standard, 2=slow */
 
 	.dsi_init_on  = &dsi_init_on_table[0],
 	.dsi_init_off = &dsi_init_off_table[0],
 	.extern_init = 0xff,
-		/* ext_index if needed, must match ext_config index;
-		 *    0xff for invalid
-		 */
+		/* ext_index if needed, 0xff for invalid */
 	.check_en = 0,
 	.check_reg = 0,
 	.check_cnt = 0,
@@ -194,6 +193,8 @@ static struct lcd_config_s lcd_config_dft = {
 	.lcd_power = &lcd_power_config,
 	.pinmux_flag = 0,
 	.change_flag = 0,
+	.retry_enable_flag = 0,
+	.retry_enable_cnt = 0,
 };
 
 static struct vinfo_s lcd_vinfo = {
@@ -362,6 +363,7 @@ static void lcd_resume_work(struct work_struct *p_work)
 {
 	mutex_lock(&lcd_driver->power_mutex);
 	aml_lcd_notifier_call_chain(LCD_EVENT_POWER_ON, NULL);
+	lcd_if_enable_retry(lcd_driver->lcd_config);
 	LCDPR("%s finished\n", __func__);
 	mutex_unlock(&lcd_driver->power_mutex);
 }
@@ -904,13 +906,9 @@ static int lcd_config_probe(struct platform_device *pdev)
 				&lcd_driver->lcd_probe_delayed_work,
 				msecs_to_jiffies(2000));
 		} else {
-			LCDPR("Warning: no lcd_probe_delayed workqueue\n");
-			ret = lcd_mode_probe(lcd_driver->dev);
-			if (ret) {
-				kfree(lcd_driver);
-				lcd_driver = NULL;
-				LCDERR("probe exit\n");
-			}
+			schedule_delayed_work(
+				&lcd_driver->lcd_probe_delayed_work,
+				msecs_to_jiffies(2000));
 		}
 	} else {
 		ret = lcd_mode_probe(lcd_driver->dev);
@@ -962,6 +960,12 @@ static struct lcd_data_s lcd_data_g12a = {
 	.reg_map_table = &lcd_reg_axg[0],
 };
 
+static struct lcd_data_s lcd_data_g12b = {
+	.chip_type = LCD_CHIP_G12B,
+	.chip_name = "g12b",
+	.reg_map_table = &lcd_reg_axg[0],
+};
+
 static const struct of_device_id lcd_dt_match_table[] = {
 	{
 		.compatible = "amlogic, lcd-gxtvbb",
@@ -986,6 +990,10 @@ static const struct of_device_id lcd_dt_match_table[] = {
 	{
 		.compatible = "amlogic, lcd-g12a",
 		.data = &lcd_data_g12a,
+	},
+	{
+		.compatible = "amlogic, lcd-g12b",
+		.data = &lcd_data_g12b,
 	},
 	{},
 };
@@ -1042,6 +1050,7 @@ static int lcd_probe(struct platform_device *pdev)
 static int lcd_remove(struct platform_device *pdev)
 {
 	cancel_delayed_work(&lcd_driver->lcd_probe_delayed_work);
+	cancel_work_sync(&(lcd_driver->lcd_resume_work));
 	if (lcd_driver->workqueue)
 		destroy_workqueue(lcd_driver->workqueue);
 
@@ -1069,17 +1078,14 @@ static int lcd_resume(struct platform_device *pdev)
 			queue_work(lcd_driver->workqueue,
 				&(lcd_driver->lcd_resume_work));
 		} else {
-			mutex_lock(&lcd_driver->power_mutex);
-			LCDPR("Warning: no lcd workqueue\n");
-			aml_lcd_notifier_call_chain(LCD_EVENT_POWER_ON, NULL);
-			LCDPR("%s finished\n", __func__);
-			mutex_unlock(&lcd_driver->power_mutex);
+			schedule_work(&(lcd_driver->lcd_resume_work));
 		}
 	} else {
 		mutex_lock(&lcd_driver->power_mutex);
 		LCDPR("directly lcd resume\n");
 		lcd_resume_flag = 1;
 		aml_lcd_notifier_call_chain(LCD_EVENT_POWER_ON, NULL);
+		lcd_if_enable_retry(lcd_driver->lcd_config);
 		LCDPR("%s finished\n", __func__);
 		mutex_unlock(&lcd_driver->power_mutex);
 	}

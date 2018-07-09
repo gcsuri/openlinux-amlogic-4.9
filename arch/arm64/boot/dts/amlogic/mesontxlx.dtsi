@@ -30,7 +30,7 @@
 	cpus:cpus {
 		#address-cells = <2>;
 		#size-cells = <0>;
-
+		#cooling-cells = <2>;/* min followed by max */
 		cpu-map {
 			cluster0:cluster0 {
 				core0 {
@@ -258,7 +258,7 @@
 
 	wdt_ee: watchdog@0xffd0f0d0 {
 		compatible = "amlogic, meson-wdt";
-		status = "disabled";
+		status = "watch";
 		default_timeout=<10>;
 		reset_watchdog_method=<1>; /* 0:sysfs,1:kernel */
 		reset_watchdog_time=<2>;
@@ -268,6 +268,11 @@
 		reg = <0x0 0xffd0f0d0 0x0 0x10>;
 		clock-names = "xtal";
 		clocks = <&xtal>;
+	};
+
+	ram-dump {
+		compatible = "amlogic, ram_dump";
+		status = "okay";
 	};
 
 	amlogic-jtag {
@@ -377,10 +382,21 @@
 		};
 	};
 
+	saradc: saradc {
+		compatible = "amlogic,meson-txlx-saradc";
+		status = "okay";
+		#io-channel-cells = <1>;
+		clocks = <&xtal>, <&clkc CLKID_SARADC_GATE>;
+		clock-names = "xtal", "saradc_clk";
+		interrupts = <GIC_SPI 73 IRQ_TYPE_EDGE_RISING>;
+		reg = <0x0 0xff809000 0x0 0x38>;
+	};
+
 	custom_maps: custom_maps {
-		mapnum = <2>;
+		mapnum = <3>;
 		map0 = <&map_0>;
 		map1 = <&map_1>;
+		map2 = <&map_2>;
 		map_0: map_0{
 			mapname = "amlogic-remote-1";
 			customcode = <0xfb04>;
@@ -500,6 +516,29 @@
 				REMOTE_KEY(0x0b, KEY_QUESTION)
 				REMOTE_KEY(0x00, KEY_CHAT)
 				REMOTE_KEY(0x13, KEY_SEARCH)>;
+		};
+		map_2: map_2{
+			mapname = "amlogic-remote-3";
+			customcode = <0xbd02>;
+			release_delay = <80>;
+			size  = <17>;
+			keymap = <REMOTE_KEY(0xca,103)
+			REMOTE_KEY(0xd2,108)
+			REMOTE_KEY(0x99,105)
+			REMOTE_KEY(0xc1,106)
+			REMOTE_KEY(0xce,KEY_ENTER)
+			REMOTE_KEY(0x45,116)
+			REMOTE_KEY(0xc5,133)
+			REMOTE_KEY(0x80,113)
+			REMOTE_KEY(0xd0,15)
+			REMOTE_KEY(0xd6,125)
+			REMOTE_KEY(0x95,102)
+			REMOTE_KEY(0xdd,104)
+			REMOTE_KEY(0x8c,109)
+			REMOTE_KEY(0x89,131)
+			REMOTE_KEY(0x9c,130)
+			REMOTE_KEY(0x9a,120)
+			REMOTE_KEY(0xcd,121)>;
 		};
 	};
 
@@ -657,6 +696,23 @@
 				status = "disabled";
 			};
 
+			spicc0: spicc0 {
+				compatible = "amlogic, spicc";
+				reg = <0x0 0x13000 0x0 0x40>;
+				clock-names = "spicc_clk";
+				clocks = <&clkc CLKID_SPICC0>;
+				device_id = <0>;
+				enhance = <1>;
+				ssctl = <0>;
+				dma_tx_threshold = <3>;
+				dma_num_per_read_burst = <13>;
+				dma_auto_param = <1>;
+				delay_control = <0x15>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+				status = "disabled";
+			};
+
 			spicc_a: spi@13000 {
 				compatible = "amlogic,meson-txlx-spicc";
 				reg = <0x0 0x13000 0x0 0x3c>;
@@ -805,15 +861,6 @@
 				max_frame_time = <200>;
 			};
 
-			saradc: saradc {
-				compatible = "amlogic,meson-txlx-saradc";
-				status = "okay";
-				#io-channel-cells = <1>;
-				clocks = <&xtal>, <&clkc CLKID_SARADC_GATE>;
-				clock-names = "xtal", "saradc_clk";
-				interrupts = <GIC_SPI 73 IRQ_TYPE_EDGE_RISING>;
-				reg = <0x0 0x9000 0x0 0x38>;
-			};
 
 			uart_AO: serial@3000 {
 				compatible = "amlogic, meson-uart";
@@ -853,6 +900,7 @@
 			rng {
 				compatible = "amlogic,meson-rng";
 				reg = <0x0 0x100 0x0 0x4>;
+				quality = /bits/ 16 <1000>;
 			};
 		};/* end of periphs */
 

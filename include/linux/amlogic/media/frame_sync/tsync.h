@@ -44,7 +44,50 @@ enum tsync_mode_e {
 	TSYNC_MODE_PCRMASTER,
 };
 
+enum tysnc_func_type_e {
+	TSYNC_PCRSCR_VALID,
+	TSYNC_PCRSCR_GET,
+	TSYNC_FIRST_PCRSCR_GET,
+	TSYNC_PCRAUDIO_VALID,
+	TSYNC_PCRVIDEO_VALID,
+	TSYNC_BUF_BY_BYTE,
+	TSYNC_STBUF_LEVEL,
+	TSYNC_STBUF_SPACE,
+	TSYNC_STBUF_SIZE,
+	TSYNC_FUNC_TYPE_MAX,
+};
+
 extern bool disable_slow_sync;
+
+typedef u8 (*pfun_tsdemux_pcrscr_valid)(void);
+extern pfun_tsdemux_pcrscr_valid tsdemux_pcrscr_valid_cb;
+
+typedef u32 (*pfun_tsdemux_pcrscr_get)(void);
+extern pfun_tsdemux_pcrscr_get tsdemux_pcrscr_get_cb;
+
+typedef u32 (*pfun_tsdemux_first_pcrscr_get)(void);
+extern pfun_tsdemux_first_pcrscr_get tsdemux_first_pcrscr_get_cb;
+
+typedef u8 (*pfun_tsdemux_pcraudio_valid)(void);
+extern pfun_tsdemux_pcraudio_valid tsdemux_pcraudio_valid_cb;
+
+typedef u8 (*pfun_tsdemux_pcrvideo_valid)(void);
+extern pfun_tsdemux_pcrvideo_valid tsdemux_pcrvideo_valid_cb;
+
+typedef struct stream_buf_s *(*pfun_get_buf_by_type)(u32 type);
+extern pfun_get_buf_by_type get_buf_by_type_cb;
+
+typedef u32 (*pfun_stbuf_level)(struct stream_buf_s *buf);
+extern pfun_stbuf_level stbuf_level_cb;
+
+typedef u32 (*pfun_stbuf_space)(struct stream_buf_s *buf);
+extern pfun_stbuf_space stbuf_space_cb;
+
+typedef u32 (*pfun_stbuf_size)(struct stream_buf_s *buf);
+extern pfun_stbuf_size stbuf_size_cb;
+
+extern int register_tsync_callbackfunc(
+	enum tysnc_func_type_e ntype, void *pfunc);
 
 #ifdef MODIFY_TIMESTAMP_INC_WITH_PLL
 extern void set_timestamp_inc_factor(u32 factor);
@@ -111,6 +154,8 @@ extern int tsync_get_av_threshold_max(void);
 extern int tsync_set_av_threshold_min(int min);
 
 extern int tsync_set_av_threshold_max(int max);
+
+extern void set_pts_realign(void);
 
 static inline u32 tsync_vpts_discontinuity_margin(void)
 {

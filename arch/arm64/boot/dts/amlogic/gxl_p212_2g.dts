@@ -460,12 +460,14 @@
 		clocks = <&clkc CLKID_DOS_PARSER
 			&clkc CLKID_DEMUX
 			&clkc CLKID_DOS
+			&clkc CLKID_CLK81
 			&clkc CLKID_VDEC_MUX
 			&clkc CLKID_HCODEC_MUX
 			&clkc CLKID_HEVC_MUX>;
 		clock-names = "parser_top",
 			"demux",
 			"vdec",
+			"clk_81",
 			"clk_vdec_mux",
 			"clk_hcodec_mux",
 			"clk_hevc_mux";
@@ -1085,6 +1087,10 @@
 		gamma_en = <0>;/*1:enabel ;0:disable*/
 		wb_en = <0>;/*1:enabel ;0:disable*/
 		cm_en = <0>;/*1:enabel ;0:disable*/
+		/*1:enabel osd lut 100 table;0:disable*/
+		cfg_en_osd_100 = <1>;
+		/*0: 709/601  1: bt2020*/
+		tx_op_color_primary = <0>;
 	};
 
 	unifykey{

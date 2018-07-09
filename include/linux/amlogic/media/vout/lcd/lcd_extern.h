@@ -37,7 +37,7 @@ enum lcd_extern_i2c_bus_e {
 
 #define LCD_EXTERN_SPI_CLK_FREQ_DFT   10000 /* default 10k */
 
-#define LCD_EXTERN_INIT_ON_MAX        500
+#define LCD_EXTERN_INIT_ON_MAX        1500
 #define LCD_EXTERN_INIT_OFF_MAX       100
 
 #define LCD_EXTERN_INIT_CMD           0x00
@@ -87,6 +87,11 @@ struct aml_lcd_extern_driver_s {
 	int (*power_off)(struct aml_lcd_extern_driver_s *ext_drv);
 	struct pinctrl *pin;
 	unsigned int pinmux_flag;
+};
+
+struct aml_lcd_extern_i2c_dev_s {
+	char name[30];
+	struct i2c_client *client;
 };
 
 extern struct aml_lcd_extern_driver_s *aml_lcd_extern_get_driver(int index);

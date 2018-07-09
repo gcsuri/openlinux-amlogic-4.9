@@ -268,12 +268,18 @@ static int set_vpu_clk(unsigned int vclk)
 		ret = 1;
 		VPUERR("set vpu clk out of supported range\n");
 		goto set_vpu_clk_limit;
-	} else if (clk_level < vpu_conf.data->clk_level_dft) {
+	}
 #ifdef LIMIT_VPU_CLK_LOW
+	if (clk_level < vpu_conf.data->clk_level_dft) {
 		ret = 3;
 		VPUERR("set vpu clk less than system default\n");
 		goto set_vpu_clk_limit;
+	}
 #endif
+	if (clk_level >= sizeof(vpu_clk_table) / sizeof(struct vpu_clk_s)) {
+		ret = 7;
+		VPUERR("clk_level %d is invalid\n", clk_level);
+		goto set_vpu_clk_limit;
 	}
 
 	clk = get_vpu_clk();
@@ -382,10 +388,12 @@ int request_vpu_clk_vmod(unsigned int vclk, unsigned int vmod)
 
 	vpu_conf.clk_vmod[vmod] = clk_level;
 	if (vpu_debug_print_flag) {
-		VPUPR("request vpu clk: %s %uHz\n",
-			vpu_mod_table[vmod],
-			vpu_clk_table[clk_level].freq);
-		dump_stack();
+		if (vmod < VPU_MOD_MAX) {
+			VPUPR("request vpu clk: %s %uHz\n",
+				vpu_mod_table[vmod],
+				vpu_clk_table[clk_level].freq);
+			dump_stack();
+		}
 	}
 
 	clk_level = get_vpu_clk_level_max_vmod();
@@ -439,8 +447,10 @@ int release_vpu_clk_vmod(unsigned int vmod)
 	clk_level = 0;
 	vpu_conf.clk_vmod[vmod] = clk_level;
 	if (vpu_debug_print_flag) {
-		VPUPR("release vpu clk: %s\n", vpu_mod_table[vmod]);
-		dump_stack();
+		if (vmod < VPU_MOD_MAX) {
+			VPUPR("release vpu clk: %s\n", vpu_mod_table[vmod]);
+			dump_stack();
+		}
 	}
 
 	clk_level = get_vpu_clk_level_max_vmod();
@@ -512,10 +522,12 @@ void switch_vpu_mem_pd_vmod(unsigned int vmod, int flag)
 	if (table[i].vmod == VPU_MOD_MAX)
 		VPUPR("switch_vpu_mem_pd: unsupport vpu mod: %d\n", vmod);
 	if (vpu_debug_print_flag) {
-		VPUPR("switch_vpu_mem_pd: %s %s\n",
-			vpu_mod_table[vmod],
-			((flag == VPU_MEM_POWER_ON) ? "ON" : "OFF"));
-		dump_stack();
+		if (vmod < VPU_MOD_MAX) {
+			VPUPR("switch_vpu_mem_pd: %s %s\n",
+				vpu_mod_table[vmod],
+				((flag == VPU_MEM_POWER_ON) ? "ON" : "OFF"));
+			dump_stack();
+		}
 	}
 }
 
@@ -638,10 +650,12 @@ void switch_vpu_clk_gate_vmod(unsigned int vmod, int flag)
 		VPUPR("switch_vpu_clk_gate: unsupport vpu mod: %d\n", vmod);
 
 	if (vpu_debug_print_flag) {
-		VPUPR("switch_vpu_clk_gate: %s %s\n",
-			vpu_mod_table[vmod],
-			((flag == VPU_CLK_GATE_ON) ? "ON" : "OFF"));
-		dump_stack();
+		if (vmod < VPU_MAX) {
+			VPUPR("switch_vpu_clk_gate: %s %s\n",
+				vpu_mod_table[vmod],
+				((flag == VPU_CLK_GATE_ON) ? "ON" : "OFF"));
+			dump_stack();
+		}
 	}
 }
 
@@ -737,6 +751,7 @@ static ssize_t vpu_clk_debug(struct class *class, struct class_attribute *attr,
 		tmp[0] = VPU_MOD_MAX;
 		ret = sscanf(buf, "dump %u", &tmp[0]);
 		if (ret == 1) {
+			tmp[0] = (tmp[0] >= VPU_MOD_MAX) ? VPU_MOD_MAX : tmp[0];
 			VPUPR("clk holdings:\n");
 			pr_info("%s:  %uHz(%u)\n", vpu_mod_table[tmp[0]],
 				vpu_clk_table[vpu_conf.clk_vmod[tmp[0]]].freq,
@@ -1314,6 +1329,28 @@ static struct vpu_data_s vpu_data_g12a = {
 	.mem_pd_reg2_valid = 1,
 
 	.mem_pd_table_cnt =
+		sizeof(vpu_mem_pd_g12b) / sizeof(struct vpu_ctrl_s),
+	.clk_gate_table_cnt =
+		sizeof(vpu_clk_gate_g12a) / sizeof(struct vpu_ctrl_s),
+	.mem_pd_table = vpu_mem_pd_g12b,
+	.clk_gate_table = vpu_clk_gate_g12a,
+
+	.power_on  = vpu_power_on_txlx,
+	.power_off = vpu_power_off_txlx,
+};
+
+static struct vpu_data_s vpu_data_g12b = {
+	.chip_type = VPU_CHIP_G12B,
+	.chip_name = "g12b",
+	.clk_level_dft = CLK_LEVEL_DFT_G12A,
+	.clk_level_max = CLK_LEVEL_MAX_G12A,
+	.fclk_div_table = fclk_div_table_g12a,
+
+	.gp_pll_valid = 0,
+	.mem_pd_reg1_valid = 1,
+	.mem_pd_reg2_valid = 1,
+
+	.mem_pd_table_cnt =
 		sizeof(vpu_mem_pd_g12a) / sizeof(struct vpu_ctrl_s),
 	.clk_gate_table_cnt =
 		sizeof(vpu_clk_gate_g12a) / sizeof(struct vpu_ctrl_s),
@@ -1352,6 +1389,10 @@ static const struct of_device_id vpu_of_table[] = {
 	{
 		.compatible = "amlogic, vpu-g12a",
 		.data = &vpu_data_g12a,
+	},
+	{
+		.compatible = "amlogic, vpu-g12b",
+		.data = &vpu_data_g12b,
 	},
 	{},
 };

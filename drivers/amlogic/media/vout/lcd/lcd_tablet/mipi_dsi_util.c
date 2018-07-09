@@ -46,7 +46,7 @@
 #define MIPI_DSI_COLOR_18BIT            COLOR_18BIT_CFG_2
 #define MIPI_DSI_COLOR_24BIT            COLOR_24BIT
 #define MIPI_DSI_TEAR_SWITCH            MIPI_DCS_DISABLE_TEAR
-#define CMD_TIMEOUT_CNT                 3000
+#define CMD_TIMEOUT_CNT                 5000
 /* ************************************************************* */
 
 static char *operation_mode_table[] = {
@@ -79,7 +79,7 @@ static char *video_data_type_table[] = {
 	"un-support type",
 };
 
-static char *phy_stop_wait_table[] = {
+static char *phy_switch_table[] = {
 	"AUTO",
 	"STANDARD",
 	"SLOW",
@@ -112,68 +112,38 @@ static void mipi_dsi_init_table_print(struct dsi_config_s *dconf, int on_off)
 	}
 	i = 0;
 	n = 0;
-	while (i < n_max) {
+	while ((i + 1) < n_max) {
 		if (dsi_table[i] == 0xff) { /* ctrl flag */
-			n = 2;
+			n = 0;
 			if (dsi_table[i+1] == 0xff) {
 				pr_info("  0x%02x,0x%02x,\n",
 					dsi_table[i], dsi_table[i+1]);
 				break;
-			} else {
-				pr_info("  0x%02x,%d,\n",
-					dsi_table[i], dsi_table[i+1]);
 			}
+			pr_info("  0x%02x,%d,\n",
+				dsi_table[i], dsi_table[i+1]);
 		} else if (dsi_table[i] == 0xf0) { /* gpio */
-			n = (DSI_CMD_SIZE_INDEX + 1) +
-				dsi_table[i+DSI_CMD_SIZE_INDEX];
-			len = 0;
+			n = dsi_table[i+DSI_CMD_SIZE_INDEX];
+			len = sprintf(str, "  0x%02x,%d,", dsi_table[i], n);
 			for (j = 0; j < n; j++) {
-				if (j == 0) {
-					len += sprintf(str+len, "0x%02x,",
-						dsi_table[i+j]);
-				} else {
-					len += sprintf(str+len, "%d,",
-						dsi_table[i+j]);
-				}
+				len += sprintf(str+len, "%d,",
+					dsi_table[i+2+j]);
 			}
-			if (len > 0)
-				pr_info("  %s\n", str);
-		} else if (dsi_table[i] == 0xfc) { /* check state */
-			n = (DSI_CMD_SIZE_INDEX + 1) +
-				dsi_table[i+DSI_CMD_SIZE_INDEX];
-			len = 0;
-			for (j = 0; j < n; j++) {
-				if (j == DSI_CMD_SIZE_INDEX) {
-					len += sprintf(str+len, "%d,",
-						dsi_table[i+j]);
-				} else {
-					len += sprintf(str+len, "0x%02x,",
-						dsi_table[i+j]);
-				}
-			}
-			if (len > 0)
-				pr_info("  %s\n", str);
+			pr_info("%s\n", str);
 		} else if ((dsi_table[i] & 0xf) == 0x0) {
-			pr_info("dsi_init_%s wrong data_type: 0x%02x\n",
+			pr_info("  dsi_init_%s wrong data_type: 0x%02x\n",
 				on_off ? "on" : "off", dsi_table[i]);
 			break;
 		} else {
-			n = (DSI_CMD_SIZE_INDEX + 1) +
-				dsi_table[i+DSI_CMD_SIZE_INDEX];
-			len = 0;
+			n = dsi_table[i+DSI_CMD_SIZE_INDEX];
+			len = sprintf(str, "  0x%02x,%d,", dsi_table[i], n);
 			for (j = 0; j < n; j++) {
-				if (j == DSI_CMD_SIZE_INDEX) {
-					len += sprintf(str+len, "%d,",
-						dsi_table[i+j]);
-				} else {
-					len += sprintf(str+len, "0x%02x,",
-						dsi_table[i+j]);
-				}
+				len += sprintf(str+len, "0x%02x,",
+					dsi_table[i+2+j]);
 			}
-			if (len > 0)
-				pr_info("  %s\n", str);
+			pr_info("%s\n", str);
 		}
-		i += n;
+		i += (n + 2);
 	}
 }
 
@@ -263,8 +233,8 @@ static void mipi_dsi_host_print_info(struct lcd_config_s *pconf)
 		"      init:              %s(%d)\n"
 		"      display:           %s(%d)\n"
 		"  video mode type:       %s(%d)\n"
-		"  clk lp continuous:     %d\n"
-		"  phy stop wait:         %s(%d)\n"
+		"  clk always hs:         %d\n"
+		"  phy switch:            %s(%d)\n"
 		"  data format:           %s\n"
 		"  lp escape clock:       %d.%03dMHz\n",
 		dconf->lane_num, dconf->bit_rate_max,
@@ -276,9 +246,9 @@ static void mipi_dsi_host_print_info(struct lcd_config_s *pconf)
 		dconf->operation_mode_display,
 		video_mode_type_table[dconf->video_mode_type],
 		dconf->video_mode_type,
-		dconf->clk_lp_continuous,
-		phy_stop_wait_table[dconf->phy_stop_wait],
-		dconf->phy_stop_wait,
+		dconf->clk_always_hs,
+		phy_switch_table[dconf->phy_switch],
+		dconf->phy_switch,
 		video_data_type_table[dconf->dpi_data_format],
 		(esc_clk / 1000000), (esc_clk % 1000000) / 1000);
 
@@ -321,23 +291,30 @@ int lcd_mipi_dsi_init_table_detect(struct device_node *m_node,
 		sprintf(propname, "dsi_init_off");
 	}
 
-	para = kmalloc(sizeof(unsigned int)*100, GFP_KERNEL);
+	para = kcalloc(n_max, sizeof(unsigned int), GFP_KERNEL);
 	if (para == NULL) {
 		LCDERR("%s: Not enough memory\n", __func__);
 		return -1;
 	}
 	ret = of_property_read_u32_index(m_node, propname, 0, &para[0]);
 	if (ret) {
-		LCDERR("faild to get %s\n", propname);
-		kfree(para);
-		return -1;
+		LCDERR("failed to get %s\n", propname);
+		goto lcd_mipi_dsi_init_table_detect_err;
 	}
 	i = 0;
-	while (i < n_max) {
+	while ((i + 1) < n_max) {
 		ret = of_property_read_u32_index(m_node, propname, i, &val);
+		if (ret) {
+			LCDERR("failed to get %s\n", propname);
+			goto lcd_mipi_dsi_init_table_detect_err;
+		}
 		if (val == 0xff) {
 			ret = of_property_read_u32_index(m_node,
 				propname, (i+1), &val);
+			if (ret) {
+				LCDERR("failed to get %s\n", propname);
+				goto lcd_mipi_dsi_init_table_detect_err;
+			}
 			i += 2;
 			if (val == 0xff)
 				break;
@@ -345,29 +322,55 @@ int lcd_mipi_dsi_init_table_detect(struct device_node *m_node,
 			/*  probe gpio */
 			ret = of_property_read_u32_index(m_node,
 				propname, (i + DSI_GPIO_INDEX), &val);
+			if (ret) {
+				LCDERR("failed to get %s\n", propname);
+				goto lcd_mipi_dsi_init_table_detect_err;
+			}
 			lcd_cpu_gpio_probe(val);
 
-			/*  cmd size */
+			/* cmd size */
 			ret = of_property_read_u32_index(m_node,
 				propname, (i + DSI_CMD_SIZE_INDEX), &val);
-			if (val > n_max)
-				break;
+			if (ret) {
+				LCDERR("failed to get %s\n", propname);
+				goto lcd_mipi_dsi_init_table_detect_err;
+			}
 			if (val < 3) {
 				LCDERR("get %s wrong cmd_size %d for gpio\n",
 					propname, val);
+				break;
+			}
+			if ((i + 2 + val) >= n_max) {
+				LCDERR("get %s cmd_size out of max for gpio\n",
+					propname);
 				break;
 			}
 			i = i + (DSI_CMD_SIZE_INDEX + 1) + (val & 0xff);
 		} else if (val == 0xfc) { /* check state */
 			ret = of_property_read_u32_index(m_node,
 				propname, (i + DSI_CMD_SIZE_INDEX), &val);
-			if (val > n_max)
+			if (ret) {
+				LCDERR("failed to get %s\n", propname);
+				goto lcd_mipi_dsi_init_table_detect_err;
+			}
+			if ((i + 2 + val) >= n_max) {
+				LCDERR("get %s cmd_size out of max for check\n",
+					propname);
 				break;
+			}
 
 			ret = of_property_read_u32_index(m_node, propname,
 				(i + DSI_CMD_SIZE_INDEX + 1), &para[0]);
+			if (ret) {
+				LCDERR("failed to get %s\n", propname);
+				goto lcd_mipi_dsi_init_table_detect_err;
+			}
 			ret = of_property_read_u32_index(m_node, propname,
 				(i + DSI_CMD_SIZE_INDEX + 2), &para[1]);
+			if (ret) {
+				LCDERR("failed to get %s\n", propname);
+				goto lcd_mipi_dsi_init_table_detect_err;
+			}
 			dconf->check_reg = para[0];
 			dconf->check_cnt = para[1];
 			if (dconf->check_cnt > 0)
@@ -380,15 +383,23 @@ int lcd_mipi_dsi_init_table_detect(struct device_node *m_node,
 		} else {
 			ret = of_property_read_u32_index(m_node,
 				propname, (i + DSI_CMD_SIZE_INDEX), &val);
-			if (val > n_max)
+			if (ret) {
+				LCDERR("failed to get %s\n", propname);
+				goto lcd_mipi_dsi_init_table_detect_err;
+			}
+			if ((i + 2 + val) >= n_max) {
+				LCDERR("get %s cmd_size out of max\n",
+					propname);
 				break;
+			}
 			i = i + (DSI_CMD_SIZE_INDEX + 1) + (val & 0xff);
 		}
 	}
 	i = (i > n_max) ? n_max : i;
 	ret = of_property_read_u32_array(m_node, propname, &para[0], i);
 	if (ret) {
-		LCDERR("faild to get %s\n", propname);
+		LCDERR("failed to get %s\n", propname);
+		goto lcd_mipi_dsi_init_table_detect_err;
 	} else {
 		for (j = 0; j < i; j++)
 			dsi_table[j] = (unsigned char)(para[j] & 0xff);
@@ -397,6 +408,10 @@ int lcd_mipi_dsi_init_table_detect(struct device_node *m_node,
 	if (lcd_debug_print_flag)
 		mipi_dsi_init_table_print(dconf, on_off);
 
+	kfree(para);
+	return 0;
+
+lcd_mipi_dsi_init_table_detect_err:
 	kfree(para);
 	return ret;
 }
@@ -558,7 +573,7 @@ static void dsi_phy_init(struct dsi_phy_s *dphy, unsigned char lane_num)
 	}
 }
 
-static void dsi_phy_config_set(struct lcd_config_s *pconf)
+static void set_dsi_phy_config(struct dsi_config_s *dconf)
 {
 	if (lcd_debug_print_flag)
 		LCDPR("%s\n", __func__);
@@ -579,22 +594,13 @@ static void dsi_phy_config_set(struct lcd_config_s *pconf)
 	dsi_host_write(MIPI_DSI_DWC_PHY_RSTZ_OS, 0xf);
 
 	/* Analog */
-	dsi_phy_init(&dsi_phy_config, pconf->lcd_control.mipi_config->lane_num);
+	dsi_phy_init(&dsi_phy_config, dconf->lane_num);
 
 	/* Check the phylock/stopstateclklane to decide if the DPHY is ready */
 	check_phy_status();
 
 	/* Trigger a sync active for esc_clk */
 	dsi_phy_set_mask(MIPI_DSI_PHY_CTRL, (1 << 1));
-
-	/* Startup transfer */
-	if (pconf->lcd_control.mipi_config->clk_lp_continuous) {
-		dsi_host_write(MIPI_DSI_DWC_LPCLK_CTRL_OS,
-			(0x1 << BIT_TXREQUESTCLKHS));
-	} else {
-		dsi_host_write(MIPI_DSI_DWC_LPCLK_CTRL_OS,
-			(0x1 << BIT_AUTOCLKLANE_CTRL) | (0x1 << BIT_TXREQUESTCLKHS));
-	}
 }
 
 static void startup_mipi_dsi_host(void)
@@ -616,6 +622,18 @@ static void startup_mipi_dsi_host(void)
 	mdelay(10);
 }
 
+static void mipi_dsi_lpclk_ctrl(struct dsi_config_s *dconf)
+{
+	unsigned int lpclk;
+
+	/* when lpclk = 1, enable clk lp state */
+	lpclk = (dconf->clk_always_hs) ? 0 : 1;
+
+	dsi_host_write(MIPI_DSI_DWC_LPCLK_CTRL_OS,
+		(lpclk << BIT_AUTOCLKLANE_CTRL) |
+		(0x1 << BIT_TXREQUESTCLKHS));
+}
+
 /* *************************************************************
  * Function: set_mipi_dsi_host
  * Parameters: vcid, // virtual id
@@ -632,6 +650,7 @@ static void set_mipi_dsi_host(unsigned int vcid, unsigned int chroma_subsample,
 	struct dsi_config_s *dconf;
 
 	dconf = p->lcd_control.mipi_config;
+	dconf->current_mode = operation_mode;
 	venc_data_width = dconf->venc_data_width;
 	dpi_data_format = dconf->dpi_data_format;
 	lane_num        = (unsigned int)(dconf->lane_num);
@@ -686,7 +705,7 @@ static void set_mipi_dsi_host(unsigned int vcid, unsigned int chroma_subsample,
 			(1 << BIT_LP_VBP_EN)  |       /* enalbe lp */
 			(1 << BIT_LP_VSA_EN)  |       /* enalbe lp */
 			(0 << BIT_FRAME_BTA_ACK_EN) |
-			    /* enable BTA after one frame, TODO, need check */
+			   /* enable BTA after one frame, TODO, need check */
 			/* (1 << BIT_LP_CMD_EN) |  */
 			   /* enable the command transmission only in lp mode */
 			(vid_mode_type << BIT_VID_MODE_TYPE));
@@ -775,6 +794,32 @@ static void set_mipi_dsi_host(unsigned int vcid, unsigned int chroma_subsample,
 		dsi_host_write(MIPI_DSI_DWC_PHY_TMR_LPCLK_CFG_OS, 0x870025);
 	else
 		dsi_host_write(MIPI_DSI_DWC_PHY_TMR_LPCLK_CFG_OS, 0x260017);
+}
+
+int dsi_set_operation_mode(unsigned char op_mode)
+{
+	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
+	struct lcd_config_s *pconf;
+	unsigned char cur_mode;
+
+	op_mode = (op_mode == 0) ? 0 : 1;
+	pconf = lcd_drv->lcd_config;
+	cur_mode = pconf->lcd_control.mipi_config->current_mode;
+	if (cur_mode != op_mode) {
+		set_mipi_dsi_host(MIPI_DSI_VIRTUAL_CHAN_ID,
+			0, /* Chroma sub sample, only for
+			    * YUV 422 or 420, even or odd
+			    */
+			op_mode, /* DSI operation mode, video or command */
+			pconf);
+		LCDPR("set mipi-dsi operation mode: %s(%d)\n",
+			operation_mode_table[op_mode], op_mode);
+	} else {
+		LCDPR("same mipi-dsi operation mode: %s(%d), exit\n",
+			operation_mode_table[op_mode], op_mode);
+	}
+
+	return 0;
 }
 
 /* *************************************************************
@@ -885,7 +930,7 @@ static int wait_bta_ack(void)
  * Function: wait_cmd_fifo_empty
  * Poll to check if the generic command fifo is empty
  */
-static void wait_cmd_fifo_empty(void)
+static int wait_cmd_fifo_empty(void)
 {
 	unsigned int cmd_status;
 	int i = CMD_TIMEOUT_CNT;
@@ -893,9 +938,17 @@ static void wait_cmd_fifo_empty(void)
 	do {
 		udelay(10);
 		i--;
+		cmd_status = dsi_host_getb(MIPI_DSI_DWC_CMD_PKT_STATUS_OS,
+				BIT_GEN_CMD_EMPTY, 1);
+	} while ((cmd_status != 0x1) && (i > 0));
+
+	if (cmd_status == 0) {
 		cmd_status = dsi_host_read(MIPI_DSI_DWC_CMD_PKT_STATUS_OS);
-	} while ((((cmd_status >> BIT_GEN_CMD_EMPTY) & 0x1) != 0x1) && (i > 0));
-	print_mipi_cmd_status(i, cmd_status);
+		print_mipi_cmd_status(i, cmd_status);
+		return -1;
+	}
+
+	return 0;
 }
 
 #if 0
@@ -1080,9 +1133,10 @@ static int dsi_dcs_read_packet(struct dsi_cmd_request_s *req,
 			DT_GEN_SHORT_WR_1,
 			DT_GEN_SHORT_WR_2,
  */
-static void dsi_generic_write_short_packet(struct dsi_cmd_request_s *req)
+static int dsi_generic_write_short_packet(struct dsi_cmd_request_s *req)
 {
 	unsigned int d_para[2];
+	int ret = 0;
 
 	switch (req->data_type) {
 	case DT_GEN_SHORT_WR_1:
@@ -1109,9 +1163,11 @@ static void dsi_generic_write_short_packet(struct dsi_cmd_request_s *req)
 		(((unsigned int)req->vc_id) << BIT_GEN_VC) |
 		(((unsigned int)req->data_type) << BIT_GEN_DT)));
 	if (req->req_ack == MIPI_DSI_DCS_REQ_ACK)
-		wait_bta_ack();
+		ret = wait_bta_ack();
 	else if (req->req_ack == MIPI_DSI_DCS_NO_ACK)
-		wait_cmd_fifo_empty();
+		ret = wait_cmd_fifo_empty();
+
+	return ret;
 }
 
 /* *************************************************************
@@ -1119,9 +1175,10 @@ static void dsi_generic_write_short_packet(struct dsi_cmd_request_s *req)
  * DCS Write Short Packet with Generic Interface
  * Supported Data Type: DT_DCS_SHORT_WR_0, DT_DCS_SHORT_WR_1,
  */
-static void dsi_dcs_write_short_packet(struct dsi_cmd_request_s *req)
+static int dsi_dcs_write_short_packet(struct dsi_cmd_request_s *req)
 {
 	unsigned int d_command, d_para;
+	int ret = 0;
 
 	d_command = ((unsigned int)req->payload[2]) & 0xff;
 	d_para = (req->pld_count < 2) ?
@@ -1133,9 +1190,11 @@ static void dsi_dcs_write_short_packet(struct dsi_cmd_request_s *req)
 		(((unsigned int)req->vc_id) << BIT_GEN_VC) |
 		(((unsigned int)req->data_type) << BIT_GEN_DT)));
 	if (req->req_ack == MIPI_DSI_DCS_REQ_ACK)
-		wait_bta_ack();
+		ret = wait_bta_ack();
 	else if (req->req_ack == MIPI_DSI_DCS_NO_ACK)
-		wait_cmd_fifo_empty();
+		ret = wait_cmd_fifo_empty();
+
+	return ret;
 }
 
 /* *************************************************************
@@ -1143,11 +1202,12 @@ static void dsi_dcs_write_short_packet(struct dsi_cmd_request_s *req)
  * Write Long Packet with Generic Interface
  * Supported Data Type: DT_GEN_LONG_WR, DT_DCS_LONG_WR
  */
-static void dsi_write_long_packet(struct dsi_cmd_request_s *req)
+static int dsi_write_long_packet(struct dsi_cmd_request_s *req)
 {
 	unsigned int d_command, payload_data, header_data;
 	unsigned int cmd_status;
 	unsigned int i, j, data_index, n, temp;
+	int ret = 0;
 
 	/* payload[2] start (payload[0]: data_type, payload[1]: data_cnt) */
 	data_index = DSI_CMD_SIZE_INDEX + 1;
@@ -1207,9 +1267,11 @@ static void dsi_write_long_packet(struct dsi_cmd_request_s *req)
 			(((unsigned int)req->data_type) << BIT_GEN_DT));
 	generic_if_wr(MIPI_DSI_DWC_GEN_HDR_OS, header_data);
 	if (req->req_ack == MIPI_DSI_DCS_REQ_ACK)
-		wait_bta_ack();
+		ret = wait_bta_ack();
 	else if (req->req_ack == MIPI_DSI_DCS_NO_ACK)
-		wait_cmd_fifo_empty();
+		ret = wait_cmd_fifo_empty();
+
+	return ret;
 }
 
 #ifdef DSI_CMD_READ_VALID
@@ -1277,40 +1339,36 @@ int dsi_read_single(unsigned char *payload, unsigned char *rd_data,
 }
 #endif
 
-static void mipi_dsi_check_state(unsigned char reg, int cnt)
+static int mipi_dsi_check_state(unsigned char reg, int cnt)
 {
 	int ret = 0, i, len;
 	unsigned char *rd_data;
 	unsigned char payload[3] = {DT_GEN_RD_1, 1, 0x04};
 	char str[100];
 	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
+	struct dsi_config_s *dconf;
 
-	if (lcd_drv->lcd_config->lcd_control.mipi_config->check_en == 0)
-		return;
-	LCDPR("%s\n", __func__);
+	dconf = lcd_drv->lcd_config->lcd_control.mipi_config;
+	if (dconf->check_en == 0)
+		return 0;
+	if (lcd_debug_print_flag)
+		LCDPR("%s\n", __func__);
 
 	rd_data = kmalloc_array(cnt, sizeof(unsigned char), GFP_KERNEL);
 	if (rd_data == NULL) {
 		LCDERR("%s: rd_data error\n", __func__);
-		return;
+		return 0;
 	}
 
 	payload[2] = reg;
 	ret = dsi_read_single(payload, rd_data, cnt);
-	if (ret < 0) {
-		lcd_drv->lcd_config->lcd_control.mipi_config->check_state = 0;
-		lcd_vcbus_setb(L_VCOM_VS_ADDR, 0, 12, 1);
-		kfree(rd_data);
-		return;
-	}
+	if (ret < 0)
+		goto mipi_dsi_check_state_err;
 	if (ret > cnt) {
 		LCDERR("%s: read back cnt is wrong\n", __func__);
-		kfree(rd_data);
-		return;
+		goto mipi_dsi_check_state_err;
 	}
 
-	lcd_drv->lcd_config->lcd_control.mipi_config->check_state = 1;
-	lcd_vcbus_setb(L_VCOM_VS_ADDR, 1, 12, 1);
 	len = sprintf(str, "read reg 0x%02x: ", reg);
 	for (i = 0; i < ret; i++) {
 		if (i == 0)
@@ -1320,7 +1378,22 @@ static void mipi_dsi_check_state(unsigned char reg, int cnt)
 	}
 	pr_info("%s\n", str);
 
+	dconf->check_state = 1;
+	lcd_vcbus_setb(L_VCOM_VS_ADDR, 1, 12, 1);
+	lcd_drv->lcd_config->retry_enable_flag = 0;
+	LCDPR("%s: %d\n", __func__, dconf->check_state);
 	kfree(rd_data);
+	return 0;
+
+mipi_dsi_check_state_err:
+	if (lcd_drv->lcd_config->retry_enable_cnt >= LCD_ENABLE_RETRY_MAX) {
+		dconf->check_state = 0;
+		lcd_vcbus_setb(L_VCOM_VS_ADDR, 0, 12, 1);
+		LCDPR("%s: %d\n", __func__, dconf->check_state);
+	}
+	lcd_drv->lcd_config->retry_enable_flag = 1;
+	kfree(rd_data);
+	return -1;
 }
 
 /* *************************************************************
@@ -1345,6 +1418,7 @@ int dsi_write_cmd(unsigned char *payload)
 	struct dsi_cmd_request_s dsi_cmd_req;
 	unsigned char vc_id = MIPI_DSI_VIRTUAL_CHAN_ID;
 	unsigned int req_ack = MIPI_DSI_DCS_ACK_TYPE;
+	int ret = 0;
 
 	/* mipi command(payload) */
 	/* format:  data_type, cmd_size, data.... */
@@ -1355,6 +1429,10 @@ int dsi_write_cmd(unsigned char *payload)
 	 *		data0=gpio_index, data1=gpio_value, data2=delay.
 	 */
 	while (i < DSI_CMD_SIZE_MAX) {
+		if (ret) {
+			LCDERR("%s: error, exit\n", __func__);
+			break;
+		}
 		if (payload[i] == 0xff) {
 			j = 2;
 			if (payload[i+1] == 0xff)
@@ -1382,7 +1460,7 @@ int dsi_write_cmd(unsigned char *payload)
 				break;
 			}
 			if (payload[i+DSI_GPIO_INDEX+2] > 0) {
-				mipi_dsi_check_state(
+				ret = mipi_dsi_check_state(
 					payload[i+DSI_GPIO_INDEX],
 					payload[i+DSI_GPIO_INDEX+1]);
 			}
@@ -1402,15 +1480,16 @@ int dsi_write_cmd(unsigned char *payload)
 			case DT_GEN_SHORT_WR_0:
 			case DT_GEN_SHORT_WR_1:
 			case DT_GEN_SHORT_WR_2:
-				dsi_generic_write_short_packet(&dsi_cmd_req);
+				ret = dsi_generic_write_short_packet(
+					&dsi_cmd_req);
 				break;
 			case DT_DCS_SHORT_WR_0:
 			case DT_DCS_SHORT_WR_1:
-				dsi_dcs_write_short_packet(&dsi_cmd_req);
+				ret = dsi_dcs_write_short_packet(&dsi_cmd_req);
 				break;
 			case DT_DCS_LONG_WR:
 			case DT_GEN_LONG_WR:
-				dsi_write_long_packet(&dsi_cmd_req);
+				ret = dsi_write_long_packet(&dsi_cmd_req);
 				break;
 			case DT_TURN_ON:
 				dsi_host_setb(MIPI_DSI_TOP_CNTL, 1, 2, 1);
@@ -1811,24 +1890,6 @@ static void mipi_dsi_vid_mode_config(struct lcd_config_s *pconf)
 	mipi_dsi_video_config(pconf);
 }
 
-static void mipi_dsi_host_init(struct lcd_config_s *pconf)
-{
-	unsigned int op_mode_init;
-
-	if (lcd_debug_print_flag)
-		LCDPR("%s\n", __func__);
-
-	op_mode_init = pconf->lcd_control.mipi_config->operation_mode_init;
-	mipi_dcs_set(MIPI_DSI_CMD_TRANS_TYPE, /* 0: high speed, 1: low power */
-		MIPI_DSI_DCS_ACK_TYPE,        /* if need bta ack check */
-		MIPI_DSI_TEAR_SWITCH);        /* enable tear ack */
-
-	set_mipi_dsi_host(MIPI_DSI_VIRTUAL_CHAN_ID,   /* Virtual channel id */
-		0, /* Chroma sub sample, only for YUV 422 or 420, even or odd */
-		op_mode_init, /* DSI operation mode, video or command */
-		pconf);
-}
-
 static void mipi_dsi_link_on(struct lcd_config_s *pconf)
 {
 	unsigned int op_mode_init, op_mode_disp;
@@ -1876,6 +1937,7 @@ static void mipi_dsi_link_on(struct lcd_config_s *pconf)
 
 void mipi_dsi_link_off(struct lcd_config_s *pconf)
 {
+	unsigned int op_mode_init, op_mode_disp;
 	struct dsi_config_s *dconf;
 #ifdef CONFIG_AMLOGIC_LCD_EXTERN
 	struct aml_lcd_extern_driver_s *lcd_ext;
@@ -1885,6 +1947,17 @@ void mipi_dsi_link_off(struct lcd_config_s *pconf)
 		LCDPR("%s\n", __func__);
 
 	dconf = pconf->lcd_control.mipi_config;
+	op_mode_init = dconf->operation_mode_init;
+	op_mode_disp = dconf->operation_mode_display;
+
+	if (op_mode_disp != op_mode_init) {
+		set_mipi_dsi_host(MIPI_DSI_VIRTUAL_CHAN_ID,
+			0, /* Chroma sub sample, only for
+			    * YUV 422 or 420, even or odd
+			    */
+			op_mode_init, /* DSI operation mode, video or command */
+			pconf);
+	}
 
 #ifdef CONFIG_AMLOGIC_LCD_EXTERN
 	if (dconf->extern_init < LCD_EXTERN_INDEX_INVALID) {
@@ -1969,8 +2042,12 @@ void lcd_mipi_dsi_config_set(struct lcd_config_s *pconf)
 		}
 	}
 
+	/* update check_state */
+	if (dconf->check_en)
+		dconf->check_state = lcd_vcbus_getb(L_VCOM_VS_ADDR, 12, 1);
+
 	/* Venc resolution format */
-	switch (dconf->phy_stop_wait) {
+	switch (dconf->phy_switch) {
 	case 1: /* standard */
 		dsi_phy_config.state_change = 1;
 		break;
@@ -2027,18 +2104,30 @@ void lcd_mipi_dsi_config_post(struct lcd_config_s *pconf)
 
 	/* phy config */
 	mipi_dsi_phy_config(&dsi_phy_config, dconf->bit_rate);
-
-	/* update check_state */
-	if (dconf->check_en)
-		dconf->check_state = lcd_vcbus_getb(L_VCOM_VS_ADDR, 12, 1);
 }
 
 static void mipi_dsi_host_on(struct lcd_config_s *pconf)
 {
-	startup_mipi_dsi_host();
-	mipi_dsi_host_init(pconf);
-	dsi_phy_config_set(pconf);
+	unsigned int op_mode_init;
 
+	if (lcd_debug_print_flag)
+		LCDPR("%s\n", __func__);
+
+	startup_mipi_dsi_host();
+
+	op_mode_init = pconf->lcd_control.mipi_config->operation_mode_init;
+	mipi_dcs_set(MIPI_DSI_CMD_TRANS_TYPE, /* 0: high speed, 1: low power */
+		MIPI_DSI_DCS_ACK_TYPE,        /* if need bta ack check */
+		MIPI_DSI_TEAR_SWITCH);        /* enable tear ack */
+
+	set_mipi_dsi_host(MIPI_DSI_VIRTUAL_CHAN_ID,   /* Virtual channel id */
+		0, /* Chroma sub sample, only for YUV 422 or 420, even or odd */
+		op_mode_init, /* DSI operation mode, video or command */
+		pconf);
+	set_dsi_phy_config(pconf->lcd_control.mipi_config);
+
+	/* Startup transfer */
+	mipi_dsi_lpclk_ctrl(pconf->lcd_control.mipi_config);
 	mipi_dsi_link_on(pconf);
 
 	if (lcd_debug_print_flag)

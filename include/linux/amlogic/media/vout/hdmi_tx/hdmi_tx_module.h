@@ -27,7 +27,7 @@
 #include <linux/pinctrl/consumer.h>
 
 /* HDMITX driver version */
-#define HDMITX_VER "20171127"
+#define HDMITX_VER "20180702"
 
 /* chip type */
 #define MESON_CPU_ID_M8B		0
@@ -41,6 +41,8 @@
 #define MESON_CPU_ID_GXLX		8
 #define MESON_CPU_ID_TXHD		9
 #define MESON_CPU_ID_G12A		10
+#define MESON_CPU_ID_G12B		11
+
 
 /*****************************
  *    hdmitx attr management
@@ -342,6 +344,7 @@ struct hdmitx_dev {
 	unsigned int audio_notify_flag;
 	unsigned int audio_step;
 	unsigned int repeater_tx;
+	struct hdcprp_topo *topo_info;
 	/* 0.1% clock shift, 1080p60hz->59.94hz */
 	unsigned int frac_rate_policy;
 	unsigned int rxsense_policy;
@@ -358,8 +361,14 @@ struct hdmitx_dev {
 	unsigned char hdmi_audio_off_flag;
 	enum hdmi_hdr_transfer hdr_transfer_feature;
 	enum hdmi_hdr_color hdr_color_feature;
+	/* 0: sdr 1:standard HDR 2:non standard 3:HLG*/
+	unsigned int colormetry;
+	unsigned int hdmi_last_hdr_mode;
+	unsigned int hdmi_current_hdr_mode;
 	unsigned int dv_src_feature;
 	unsigned int sdr_hdr_feature;
+	enum eotf_type hdmi_current_eotf_type;
+	enum mode_type hdmi_current_tunnel_mode;
 	unsigned int flag_3dfp:1;
 	unsigned int flag_3dtb:1;
 	unsigned int flag_3dss:1;
@@ -397,6 +406,8 @@ struct hdmitx_dev {
 #define DDC_HDCP_22_LSTORE	(CMD_DDC_OFFSET + 0x10)
 #define DDC_SCDC_DIV40_SCRAMB	(CMD_DDC_OFFSET + 0x20)
 #define DDC_HDCP14_GET_BCAPS_RP	(CMD_DDC_OFFSET + 0x30)
+#define DDC_HDCP14_GET_TOPO_INFO (CMD_DDC_OFFSET + 0x31)
+#define DDC_HDCP_SET_TOPO_INFO (CMD_DDC_OFFSET + 0x32)
 
 /***********************************************************************
  *             CONFIG CONTROL //CntlConfig

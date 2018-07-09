@@ -469,6 +469,15 @@
 #define VIU2_OSD1_MALI_UNPACK_CTRL 0x1e4f
 #define VIU2_OSD1_DIMM_CTRL 0x1e50
 #define VIU2_OSD1_UNSUPPORT VIU_OSD2_TCOLOR_AG3
+/* viu2 rotate */
+#define VIU2_RMIF_CTRL1 0x1e81
+#define VIU2_RMIF_SCOPE_X 0x1e83
+#define VIU2_RMIF_SCOPE_Y 0x1e84
+#define VIU2_ROT_BLK_SIZE 0x1e85
+#define VIU2_ROT_LBUF_SIZE 0x1e86
+#define VIU2_ROT_FMT_CTRL 0x1e87
+#define VIU2_ROT_OUT_VCROP 0x1e89
+
 /* encode */
 #define ENCP_VFIFO2VD_CTL 0x1b58
 #define ENCP_VFIFO2VD_PIXEL_START 0x1b59
@@ -1413,4 +1422,7 @@
 
 #define VPP_POST_BLEND_BLEND_DUMMY_DATA            0x3968
 #define VPP_POST_BLEND_DUMMY_ALPHA                 0x3969
+#define VPP_RDARB_MODE                             0x3978
+#define VPP_RDARB_REQEN_SLV                        0x3979
+#define VPU_RDARB_MODE_L2C1                        0x279d
 #endif

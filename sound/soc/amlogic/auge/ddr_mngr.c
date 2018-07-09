@@ -632,6 +632,32 @@ struct frddr *fetch_frddr_by_src(int frddr_src)
 	return NULL;
 }
 
+/*
+ * check frddr_src is used by other frddr for sharebuffer
+ * if used, disabled the other share frddr src, the module would
+ * for current frddr, and the checked frddr
+ */
+int aml_check_sharebuffer_valid(struct frddr *fr, int ss_sel)
+{
+	int current_fifo_id = fr->fifo_id;
+	unsigned int i;
+	int ret = 1;
+
+	for (i = 0; i < DDRMAX; i++) {
+		if (frddrs[i].in_use
+			&& (frddrs[i].fifo_id != current_fifo_id)
+			&& (frddrs[i].dest == ss_sel)) {
+
+			pr_info("ss_sel:%d used, invalid for share buffer\n",
+				ss_sel);
+			ret = 0;
+			break;
+		}
+	}
+
+	return ret;
+}
+
 struct frddr *aml_audio_register_frddr(struct device *dev,
 	struct aml_audio_controller *actrl,
 	irq_handler_t handler, void *data)
@@ -751,12 +777,16 @@ void aml_frddr_select_dst_ss(struct frddr *fr,
 {
 	struct aml_audio_controller *actrl = fr->actrl;
 	unsigned int reg_base = fr->reg_base;
-	unsigned int reg;
+	unsigned int reg, ss_valid;
 
 	reg = calc_frddr_address(EE_AUDIO_FRDDR_A_CTRL0, reg_base);
+
+	ss_valid = aml_check_sharebuffer_valid(fr, dst);
+
 	/* same source en */
 	if (fr->chipinfo
-		&& fr->chipinfo->same_src_fn) {
+		&& fr->chipinfo->same_src_fn
+		&& ss_valid) {
 		int s_v = 0, s_m = 0;
 
 			switch (sel) {
@@ -773,6 +803,8 @@ void aml_frddr_select_dst_ss(struct frddr *fr,
 					sel);
 				break;
 			}
+			pr_info("%s sel:%d, dst_src:%d\n",
+				__func__, sel, dst);
 			aml_audiobus_update_bits(actrl, reg, s_m, s_v);
 	}
 }
@@ -852,6 +884,49 @@ static void aml_check_aed(bool enable, int dst)
 				attach_aed.status = READY;
 		}
 	}
+}
+
+void frddr_init_default(unsigned int frddr_index, unsigned int src0_sel)
+{
+	unsigned int offset, reg;
+	unsigned int start_addr, end_addr, int_addr;
+	static int buf[256];
+
+	memset(buf, 0x0, sizeof(buf));
+	start_addr = virt_to_phys(buf);
+	end_addr = start_addr + sizeof(buf) - 1;
+	int_addr = sizeof(buf) / 64;
+
+	offset = EE_AUDIO_FRDDR_B_START_ADDR - EE_AUDIO_FRDDR_A_START_ADDR;
+	reg = EE_AUDIO_FRDDR_A_START_ADDR + offset * frddr_index;
+	audiobus_write(reg, start_addr);
+
+	offset = EE_AUDIO_FRDDR_B_INIT_ADDR - EE_AUDIO_FRDDR_A_INIT_ADDR;
+	reg = EE_AUDIO_FRDDR_A_INIT_ADDR + offset * frddr_index;
+	audiobus_write(reg, start_addr);
+
+	offset = EE_AUDIO_FRDDR_B_FINISH_ADDR - EE_AUDIO_FRDDR_A_FINISH_ADDR;
+	reg = EE_AUDIO_FRDDR_A_FINISH_ADDR + offset * frddr_index;
+	audiobus_write(reg, end_addr);
+
+	offset = EE_AUDIO_FRDDR_B_INT_ADDR - EE_AUDIO_FRDDR_A_INT_ADDR;
+	reg = EE_AUDIO_FRDDR_A_INT_ADDR + offset * frddr_index;
+	audiobus_write(reg, int_addr);
+
+	offset = EE_AUDIO_FRDDR_B_CTRL1 - EE_AUDIO_FRDDR_A_CTRL1;
+	reg = EE_AUDIO_FRDDR_A_CTRL1 + offset * frddr_index;
+	audiobus_write(reg,
+		(0x40 - 1) << 24 | (0x20 - 1) << 16 | 2 << 8 | 0 << 0);
+
+	offset = EE_AUDIO_FRDDR_B_CTRL0 - EE_AUDIO_FRDDR_A_CTRL0;
+	reg = EE_AUDIO_FRDDR_A_CTRL0 + offset * frddr_index;
+	audiobus_write(reg,
+		1 << 31
+		| 0 << 24
+		| 4 << 16
+		| 1 << 3 /* src0 enable */
+		| src0_sel << 0 /* src0 sel */
+	);
 }
 
 static struct ddr_chipinfo g12a_ddr_chipinfo = {

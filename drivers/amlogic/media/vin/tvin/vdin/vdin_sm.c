@@ -59,8 +59,9 @@ static int sm_print_fmt_chg;
 static int sm_atv_prestable_fmt;
 static int sm_print_prestable;
 
-static bool sm_debug_enable = true;
-module_param(sm_debug_enable, bool, 0664);
+/*bit0:general debug bit;bit1:hdmirx color change*/
+static unsigned int sm_debug_enable = 1;
+module_param(sm_debug_enable, uint, 0664);
 MODULE_PARM_DESC(sm_debug_enable,
 		"enable/disable state machine debug message");
 
@@ -140,6 +141,25 @@ MODULE_PARM_DESC(nosig2_unstable_cnt, "nosig2_unstable_cnt");
 static int signal_status = TVIN_SIG_STATUS_NULL;
 module_param(signal_status, int, 0664);
 MODULE_PARM_DESC(signal_status, "signal_status");
+enum tvin_color_fmt_range_e tvin_get_force_fmt_range(
+	enum tvin_color_fmt_range_e fmt_range,
+	enum tvin_color_fmt_e color_fmt)
+{
+	if (color_fmt == TVIN_YUV444 ||
+		color_fmt == TVIN_YUV422) {
+		if (color_range_force == COLOR_RANGE_FULL)
+			fmt_range = TVIN_YUV_FULL;
+		else if (color_range_force == COLOR_RANGE_LIMIT)
+			fmt_range = TVIN_YUV_LIMIT;
+	} else if (color_fmt == TVIN_RGB444) {
+		if (color_range_force == COLOR_RANGE_FULL)
+			fmt_range = TVIN_RGB_FULL;
+		else if (color_range_force == COLOR_RANGE_LIMIT)
+			fmt_range = TVIN_RGB_LIMIT;
+	}
+	return fmt_range;
+}
+
 /*
  * check hdmirx color format
  */
@@ -181,6 +201,10 @@ static void hdmirx_color_fmt_handler(struct vdin_dev_s *devp)
 		vdin_hdr_flag = prop->vdin_hdr_Flag;
 		pre_vdin_hdr_flag = pre_prop->vdin_hdr_Flag;
 
+		if (color_range_force)
+			prop->color_fmt_range =
+			tvin_get_force_fmt_range(pre_prop->color_fmt_range,
+			pre_prop->color_format);
 		vdin_fmt_range = prop->color_fmt_range;
 		pre_vdin_fmt_range = pre_prop->color_fmt_range;
 
@@ -188,12 +212,13 @@ static void hdmirx_color_fmt_handler(struct vdin_dev_s *devp)
 			(vdin_hdr_flag != pre_vdin_hdr_flag) ||
 			(vdin_fmt_range != pre_vdin_fmt_range) ||
 			(cur_dest_color_fmt != pre_dest_color_fmt)) {
-			pr_info("[smr.%d] cur color fmt(%d->%d), hdr_flag(%d->%d), dest color fmt(%d->%d), csc_cfg:0x%x\n",
-				devp->index,
-				pre_color_fmt, cur_color_fmt,
-				pre_vdin_hdr_flag, vdin_hdr_flag,
-				pre_dest_color_fmt, cur_dest_color_fmt,
-				devp->csc_cfg);
+			if (sm_debug_enable & (1 << 1))
+				pr_info("[smr.%d] cur color fmt(%d->%d), hdr_flag(%d->%d), dest color fmt(%d->%d), csc_cfg:0x%x\n",
+					devp->index,
+					pre_color_fmt, cur_color_fmt,
+					pre_vdin_hdr_flag, vdin_hdr_flag,
+					pre_dest_color_fmt, cur_dest_color_fmt,
+					devp->csc_cfg);
 			vdin_get_format_convert(devp);
 			devp->csc_cfg = 1;
 		} else
@@ -262,6 +287,11 @@ static void hdmirx_dv_check(struct vdin_dev_s *devp,
 	}
 }
 
+void reset_tvin_smr(unsigned int index)
+{
+	sm_dev[index].sig_status = TVIN_SIG_STATUS_NULL;
+}
+
 /*
  * tvin state machine routine
  *
@@ -300,10 +330,11 @@ void tvin_smr(struct vdin_dev_s *devp)
 	switch (sm_p->state) {
 	case TVIN_SM_STATUS_NOSIG:
 		++sm_p->state_cnt;
-		/*if ((port == TVIN_PORT_CVBS3) &&
-		 *	(devp->flags & VDIN_FLAG_SNOW_FLAG))
-		 *	tvafe_snow_config_clamp(1);
-		 */
+#ifdef CONFIG_AMLOGIC_MEDIA_TVIN_AFE
+		if ((port == TVIN_PORT_CVBS3) &&
+			(devp->flags & VDIN_FLAG_SNOW_FLAG))
+			tvafe_snow_config_clamp(1);
+#endif
 		if (sm_ops->nosig(devp->frontend)) {
 			sm_p->exit_nosig_cnt = 0;
 			if (sm_p->state_cnt >= nosig_in_cnt) {
@@ -439,10 +470,11 @@ void tvin_smr(struct vdin_dev_s *devp)
 		bool nosig = false, fmt_changed = false;
 		unsigned int prestable_out_cnt = 0;
 		devp->unstable_flag = true;
-		/*if ((port == TVIN_PORT_CVBS3) &&
-		 *	(devp->flags & VDIN_FLAG_SNOW_FLAG))
-		 *	tvafe_snow_config_clamp(0);
-		 */
+#ifdef CONFIG_AMLOGIC_MEDIA_TVIN_AFE
+		if ((port == TVIN_PORT_CVBS3) &&
+			(devp->flags & VDIN_FLAG_SNOW_FLAG))
+			tvafe_snow_config_clamp(0);
+#endif
 		if (sm_ops->nosig(devp->frontend)) {
 			nosig = true;
 			if (sm_debug_enable && !(sm_print_prestable&0x1)) {
@@ -645,4 +677,13 @@ enum tvin_sm_status_e tvin_get_sm_status(int index)
 	return sm_dev[index].state;
 }
 EXPORT_SYMBOL(tvin_get_sm_status);
+
+int tvin_get_av_status(void)
+{
+	if (tvin_get_sm_status(0) == TVIN_SM_STATUS_STABLE)
+		return true;
+
+	return false;
+}
+EXPORT_SYMBOL(tvin_get_av_status);
 

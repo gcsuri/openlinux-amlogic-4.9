@@ -720,16 +720,11 @@ static int lcd_mipi_reg_print(char *buf, int offset)
 	int n, len = 0;
 
 	n = lcd_debug_info_len(len + offset);
-	len += snprintf((buf+len), n, "\nmipi_dsi_host regs:\n");
-	reg = MIPI_DSI_DWC_PWR_UP_OS;
+	len += snprintf((buf+len), n, "\nmipi_dsi regs:\n");
 	n = lcd_debug_info_len(len + offset);
+	reg = MIPI_DSI_TOP_CNTL;
 	len += snprintf((buf+len), n,
-		"MIPI_DSI_DWC_PWR_UP_OS          [0x%04x] = 0x%08x\n",
-		reg, dsi_host_read(reg));
-	n = lcd_debug_info_len(len + offset);
-	reg = MIPI_DSI_TOP_SW_RESET;
-	len += snprintf((buf+len), n,
-		"MIPI_DSI_TOP_SW_RESET           [0x%04x] = 0x%08x\n",
+		"MIPI_DSI_TOP_CNTL               [0x%04x] = 0x%08x\n",
 		reg, dsi_host_read(reg));
 	n = lcd_debug_info_len(len + offset);
 	reg = MIPI_DSI_TOP_CLK_CNTL;
@@ -737,9 +732,49 @@ static int lcd_mipi_reg_print(char *buf, int offset)
 		"MIPI_DSI_TOP_CLK_CNTL           [0x%04x] = 0x%08x\n",
 		reg, dsi_host_read(reg));
 	n = lcd_debug_info_len(len + offset);
-	reg = MIPI_DSI_TOP_CNTL;
+	reg = MIPI_DSI_DWC_PWR_UP_OS;
 	len += snprintf((buf+len), n,
-		"MIPI_DSI_TOP_CNTL               [0x%04x] = 0x%08x\n",
+		"MIPI_DSI_DWC_PWR_UP_OS          [0x%04x] = 0x%08x\n",
+		reg, dsi_host_read(reg));
+	n = lcd_debug_info_len(len + offset);
+	reg = MIPI_DSI_DWC_PCKHDL_CFG_OS;
+	len += snprintf((buf+len), n,
+		"MIPI_DSI_DWC_PCKHDL_CFG_OS      [0x%04x] = 0x%08x\n",
+		reg, dsi_host_read(reg));
+	n = lcd_debug_info_len(len + offset);
+	reg = MIPI_DSI_DWC_LPCLK_CTRL_OS;
+	len += snprintf((buf+len), n,
+		"MIPI_DSI_DWC_LPCLK_CTRL_OS      [0x%04x] = 0x%08x\n",
+		reg, dsi_host_read(reg));
+	n = lcd_debug_info_len(len + offset);
+	reg = MIPI_DSI_DWC_CMD_MODE_CFG_OS;
+	len += snprintf((buf+len), n,
+		"MIPI_DSI_DWC_CMD_MODE_CFG_OS    [0x%04x] = 0x%08x\n",
+		reg, dsi_host_read(reg));
+	n = lcd_debug_info_len(len + offset);
+	reg = MIPI_DSI_DWC_VID_MODE_CFG_OS;
+	len += snprintf((buf+len), n,
+		"MIPI_DSI_DWC_VID_MODE_CFG_OS    [0x%04x] = 0x%08x\n",
+		reg, dsi_host_read(reg));
+	n = lcd_debug_info_len(len + offset);
+	reg = MIPI_DSI_DWC_MODE_CFG_OS;
+	len += snprintf((buf+len), n,
+		"MIPI_DSI_DWC_MODE_CFG_OS        [0x%04x] = 0x%08x\n",
+		reg, dsi_host_read(reg));
+	n = lcd_debug_info_len(len + offset);
+	reg = MIPI_DSI_DWC_PHY_STATUS_OS;
+	len += snprintf((buf+len), n,
+		"MIPI_DSI_DWC_PHY_STATUS_OS      [0x%04x] = 0x%08x\n",
+		reg, dsi_host_read(reg));
+	n = lcd_debug_info_len(len + offset);
+	reg = MIPI_DSI_DWC_INT_ST0_OS;
+	len += snprintf((buf+len), n,
+		"MIPI_DSI_DWC_INT_ST0_OS         [0x%04x] = 0x%08x\n",
+		reg, dsi_host_read(reg));
+	n = lcd_debug_info_len(len + offset);
+	reg = MIPI_DSI_DWC_INT_ST1_OS;
+	len += snprintf((buf+len), n,
+		"MIPI_DSI_DWC_INT_ST1_OS         [0x%04x] = 0x%08x\n",
 		reg, dsi_host_read(reg));
 	n = lcd_debug_info_len(len + offset);
 	reg = MIPI_DSI_TOP_STAT;
@@ -756,9 +791,6 @@ static int lcd_mipi_reg_print(char *buf, int offset)
 	len += snprintf((buf+len), n,
 		"MIPI_DSI_TOP_MEM_PD             [0x%04x] = 0x%08x\n",
 		reg, dsi_host_read(reg));
-	//reg = HHI_LVDS_TX_PHY_CNTL0;
-	//pr_info("VX1_PHY_CNTL0       [0x%04x] = 0x%08x\n",
-	//	reg, lcd_hiu_read(reg));
 
 	return len;
 }
@@ -836,6 +868,7 @@ static int lcd_reg_print(char *buf, int offset)
 		}
 		break;
 	case LCD_CHIP_G12A:
+	case LCD_CHIP_G12B:
 		if (lcd_drv->lcd_clk_path) {
 			for (i = 0; i < ARRAY_SIZE(lcd_reg_dump_clk_gp0_g12a);
 				i++) {
@@ -947,7 +980,7 @@ static char *lcd_enc_tst_str[] = {
 	"8-Black",       /* 8 */
 };
 
-static unsigned int lcd_enc_tst[][8] = {
+static unsigned int lcd_enc_tst[][7] = {
 /*tst_mode,    Y,       Cb,     Cr,     tst_en,  vfifo_en  rgbin*/
 	{0,    0x200,   0x200,  0x200,   0,      1,        3},  /* 0 */
 	{1,    0x200,   0x200,  0x200,   1,      0,        1},  /* 1 */
@@ -987,7 +1020,7 @@ static void lcd_debug_test(unsigned int num)
 		LCDPR("disable test pattern\n");
 }
 
-static void lcd_mute_setting(unsigned char flag)
+void lcd_mute_setting(unsigned char flag)
 {
 	LCDPR("set lcd mute: %d\n", flag);
 	if (flag) {
@@ -1020,19 +1053,18 @@ static void lcd_screen_restore(void)
 
 	h_active = lcd_drv->lcd_config->lcd_basic.h_active;
 	video_on_pixel = lcd_drv->lcd_config->lcd_timing.video_on_pixel;
-	if (num >= 0) {
-		lcd_vcbus_write(ENCL_VIDEO_RGBIN_CTRL, lcd_enc_tst[num][6]);
-		lcd_vcbus_write(ENCL_TST_MDSEL, lcd_enc_tst[num][0]);
-		lcd_vcbus_write(ENCL_TST_Y, lcd_enc_tst[num][1]);
-		lcd_vcbus_write(ENCL_TST_CB, lcd_enc_tst[num][2]);
-		lcd_vcbus_write(ENCL_TST_CR, lcd_enc_tst[num][3]);
-		lcd_vcbus_write(ENCL_TST_CLRBAR_STRT, video_on_pixel);
-		lcd_vcbus_write(ENCL_TST_CLRBAR_WIDTH, (h_active / 9));
-		lcd_vcbus_write(ENCL_TST_EN, lcd_enc_tst[num][4]);
-		lcd_vcbus_setb(ENCL_VIDEO_MODE_ADV, lcd_enc_tst[num][5], 3, 1);
-		if (num > 0)
-			LCDPR("show test pattern: %s\n", lcd_enc_tst_str[num]);
-	}
+
+	lcd_vcbus_write(ENCL_VIDEO_RGBIN_CTRL, lcd_enc_tst[num][6]);
+	lcd_vcbus_write(ENCL_TST_MDSEL, lcd_enc_tst[num][0]);
+	lcd_vcbus_write(ENCL_TST_Y, lcd_enc_tst[num][1]);
+	lcd_vcbus_write(ENCL_TST_CB, lcd_enc_tst[num][2]);
+	lcd_vcbus_write(ENCL_TST_CR, lcd_enc_tst[num][3]);
+	lcd_vcbus_write(ENCL_TST_CLRBAR_STRT, video_on_pixel);
+	lcd_vcbus_write(ENCL_TST_CLRBAR_WIDTH, (h_active / 9));
+	lcd_vcbus_write(ENCL_TST_EN, lcd_enc_tst[num][4]);
+	lcd_vcbus_setb(ENCL_VIDEO_MODE_ADV, lcd_enc_tst[num][5], 3, 1);
+	if (num > 0)
+		LCDPR("show test pattern: %s\n", lcd_enc_tst_str[num]);
 }
 
 static void lcd_screen_black(void)
@@ -1124,6 +1156,7 @@ static void lcd_power_interface_ctrl(int state)
 		if (lcd_drv->lcd_status & LCD_STATUS_ENCL_ON) {
 			aml_lcd_notifier_call_chain(
 				LCD_EVENT_IF_POWER_ON, NULL);
+			lcd_if_enable_retry(lcd_drv->lcd_config);
 		} else {
 			LCDERR("%s: can't power on when controller is off\n",
 				__func__);
@@ -1375,12 +1408,12 @@ static void lcd_debug_change_clk_change(unsigned int pclk)
 	pconf->lcd_timing.sync_duration_den = 100;
 
 	switch (lcd_drv->lcd_mode) {
-#ifdef CONFIG_AML_LCD_TV
+#ifdef CONFIG_AMLOGIC_LCD_TV
 	case LCD_MODE_TV:
 		lcd_tv_clk_config_change(pconf);
 		break;
 #endif
-#ifdef CONFIG_AML_LCD_TABLET
+#ifdef CONFIG_AMLOGIC_LCD_TABLET
 	case LCD_MODE_TABLET:
 		lcd_tablet_clk_config_change(pconf);
 		break;
@@ -1530,6 +1563,7 @@ static ssize_t lcd_debug_enable_store(struct class *class,
 	if (temp) {
 		mutex_lock(&lcd_drv->power_mutex);
 		aml_lcd_notifier_call_chain(LCD_EVENT_POWER_ON, NULL);
+		lcd_if_enable_retry(lcd_drv->lcd_config);
 		mutex_unlock(&lcd_drv->power_mutex);
 	} else {
 		mutex_lock(&lcd_drv->power_mutex);
@@ -2193,16 +2227,16 @@ static ssize_t lcd_debug_dump_show(struct class *class,
 	switch (lcd_debug_dump_state) {
 	case LCD_DEBUG_DUMP_INFO:
 		len = lcd_info_print(print_buf, 0);
-		len += lcd_power_info_print((print_buf+len), len);
+		lcd_power_info_print((print_buf+len), len);
 		break;
 	case LCD_DEBUG_DUMP_REG:
-		len = lcd_reg_print(print_buf, 0);
+		lcd_reg_print(print_buf, 0);
 		break;
 	case LCD_DEBUG_DUMP_HDR:
-		len = lcd_hdr_info_print(print_buf, 0);
+		lcd_hdr_info_print(print_buf, 0);
 		break;
 	default:
-		len = sprintf(print_buf, "%s: invalid command\n", __func__);
+		sprintf(print_buf, "%s: invalid command\n", __func__);
 		break;
 	}
 	len = sprintf(buf, "%s\n", print_buf);
@@ -2352,7 +2386,7 @@ static const char *lcd_vbyone_debug_usage_str = {
 
 static const char *lcd_mipi_debug_usage_str = {
 "Usage:\n"
-"    echo <lane_num> <bit_rate_max> <factor> <op_mode_init> <op_mode_disp> <vid_mode_type> <clk_lp_continuous> <phy_stop_wait> > mipi ; set mpi config\n"
+"    echo <lane_num> <bit_rate_max> <factor> <op_mode_init> <op_mode_disp> <vid_mode_type> <clk_always_hs> <phy_switch> > mipi ; set mpi config\n"
 "data format:\n"
 "    <lane_num>          : 1/2/3/4\n"
 "    <bit_rate_max>      : unit in MHz\n"
@@ -2360,8 +2394,8 @@ static const char *lcd_mipi_debug_usage_str = {
 "    <op_mode_init>      : operation mode for init (0=video mode, 1=command mode)\n"
 "    <op_mode_disp>      : operation mode for display (0=video mode, 1=command mode)\n"
 "    <vid_mode_type>     : video mode type (0=sync_pulse, 1=sync_event, 2=burst)\n"
-"    <clk_lp_continuous> : 0=stop, 1=continue\n"
-"    <phy_stop_wait>     : 0=auto, 1=standard, 2=slow\n"
+"    <clk_always_hs>     : 0=disable, 1=enable\n"
+"    <phy_switch>        : 0=auto, 1=standard, 2=slow\n"
 "\n"
 };
 
@@ -2593,21 +2627,21 @@ static ssize_t lcd_mipi_debug_store(struct class *class,
 		dsi_conf->operation_mode_init = (unsigned char)val[3];
 		dsi_conf->operation_mode_display = (unsigned char)val[4];
 		dsi_conf->video_mode_type = (unsigned char)val[5];
-		dsi_conf->clk_lp_continuous = (unsigned char)val[6];
-		dsi_conf->phy_stop_wait = (unsigned char)val[7];
+		dsi_conf->clk_always_hs = (unsigned char)val[6];
+		dsi_conf->phy_switch = (unsigned char)val[7];
 		pr_info("set mipi_dsi config:\n"
 			"lane_num=%d, bit_rate_max=%dMhz, factor_numerator=%d\n"
 			"operation_mode_init=%d, operation_mode_display=%d\n"
 			"video_mode_type=%d\n"
-			"clk_lp_continuous=%d, phy_stop_wait=%d\n\n",
+			"clk_always_hs=%d, phy_switch=%d\n\n",
 			dsi_conf->lane_num,
 			dsi_conf->bit_rate_max,
 			dsi_conf->factor_numerator,
 			dsi_conf->operation_mode_init,
 			dsi_conf->operation_mode_display,
 			dsi_conf->video_mode_type,
-			dsi_conf->clk_lp_continuous,
-			dsi_conf->phy_stop_wait);
+			dsi_conf->clk_always_hs,
+			dsi_conf->phy_switch);
 		lcd_debug_config_update();
 	} else {
 		pr_info("invalid data\n");
@@ -2846,14 +2880,132 @@ static ssize_t lcd_mipi_cmd_debug_store(struct class *class,
 	return count;
 }
 
+/* [0]=reg_addr, [1]=read_cnt */
+static unsigned char lcd_mipi_read_buf[2] = {0xff, 0};
+static ssize_t lcd_mipi_read_debug_show(struct class *class,
+		struct class_attribute *attr, char *buf)
+{
+	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
+	int ret = 0, i, len;
+	unsigned char reg, cnt, *rd_data;
+	unsigned char payload[3] = {DT_GEN_RD_1, 1, 0x04};
+
+	if ((lcd_drv->lcd_status & LCD_STATUS_IF_ON) == 0)
+		return sprintf(buf, "error: panel is disabled\n");
+
+	reg = lcd_mipi_read_buf[0];
+	cnt = lcd_mipi_read_buf[1];
+	if (reg == 0xff)
+		return sprintf(buf, "reg address is invalid\n");
+	if (cnt == 0)
+		return sprintf(buf, "read count is invalid\n");
+
+	rd_data = kcalloc(cnt, sizeof(unsigned char), GFP_KERNEL);
+	if (rd_data == NULL)
+		return sprintf(buf, "rd_data buf error\n");
+
+	payload[2] = reg;
+#ifdef CONFIG_AMLOGIC_LCD_TABLET
+	ret = dsi_read_single(payload, rd_data, cnt);
+	if (ret < 0) {
+		kfree(rd_data);
+		return sprintf(buf, "mipi-dsi read error\n");
+	}
+	if (ret > cnt) {
+		kfree(rd_data);
+		return sprintf(buf, "mipi-dsi read 0x%02x back cnt is wrong\n",
+			reg);
+	}
+#endif
+
+	len = sprintf(buf, "read reg 0x%02x: ", reg);
+	for (i = 0; i < ret; i++) {
+		if (i == 0)
+			len += sprintf(buf+len, "0x%02x", rd_data[i]);
+		else
+			len += sprintf(buf+len, ",0x%02x", rd_data[i]);
+	}
+	len += sprintf(buf+len, "\n");
+
+	kfree(rd_data);
+	return len;
+}
+
+static ssize_t lcd_mipi_read_debug_store(struct class *class,
+		struct class_attribute *attr, const char *buf, size_t count)
+{
+	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
+	unsigned int para[2];
+	int ret = 0;
+
+	if ((lcd_drv->lcd_status & LCD_STATUS_IF_ON) == 0) {
+		LCDERR("panel is disabled\n");
+		return count;
+	}
+
+	ret = sscanf(buf, "%x %d", &para[0], &para[1]);
+	if (ret < 2) {
+		pr_info("invalid data\n");
+		return count;
+	}
+	lcd_mipi_read_buf[0] = (unsigned char)para[0];
+	lcd_mipi_read_buf[1] = (unsigned char)para[1];
+
+	return count;
+}
+
 static ssize_t lcd_mipi_state_debug_show(struct class *class,
 		struct class_attribute *attr, char *buf)
 {
 	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
+	unsigned int state_save;
 
-	return sprintf(buf, "state: %d, check_en: %d\n",
+	state_save = lcd_vcbus_getb(L_VCOM_VS_ADDR, 12, 1);
+
+	return sprintf(buf, "state: %d, check_en: %d, state_save: %d\n",
 		lcd_drv->lcd_config->lcd_control.mipi_config->check_state,
-		lcd_drv->lcd_config->lcd_control.mipi_config->check_en);
+		lcd_drv->lcd_config->lcd_control.mipi_config->check_en,
+		state_save);
+}
+
+static ssize_t lcd_mipi_mode_debug_show(struct class *class,
+		struct class_attribute *attr, char *buf)
+{
+	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
+	unsigned char mode;
+
+	if ((lcd_drv->lcd_status & LCD_STATUS_IF_ON) == 0)
+		return sprintf(buf, "error: panel is disabled\n");
+
+	mode = lcd_drv->lcd_config->lcd_control.mipi_config->current_mode;
+	return sprintf(buf, "current mipi-dsi operation mode: %s(%d)\n",
+		(mode ? "command" : "video"), mode);
+}
+
+static ssize_t lcd_mipi_mode_debug_store(struct class *class,
+		struct class_attribute *attr, const char *buf, size_t count)
+{
+	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
+	unsigned int temp;
+	unsigned char mode;
+	int ret = 0;
+
+	if ((lcd_drv->lcd_status & LCD_STATUS_IF_ON) == 0) {
+		LCDERR("panel is disabled\n");
+		return count;
+	}
+
+	ret = kstrtouint(buf, 10, &temp);
+	if (ret) {
+		pr_info("invalid data\n");
+		return -EINVAL;
+	}
+	mode = (unsigned char)temp;
+#ifdef CONFIG_AMLOGIC_LCD_TABLET
+	dsi_set_operation_mode(mode);
+#endif
+
+	return count;
 }
 
 static struct class_attribute lcd_interface_debug_class_attrs[] = {
@@ -2877,7 +3029,11 @@ static struct class_attribute lcd_phy_debug_class_attrs[] = {
 static struct class_attribute lcd_mipi_debug_class_attrs[] = {
 	__ATTR(mpcmd,    0644,
 		lcd_mipi_cmd_debug_show, lcd_mipi_cmd_debug_store),
+	__ATTR(mpread,   0644,
+		lcd_mipi_read_debug_show, lcd_mipi_read_debug_store),
 	__ATTR(mpstate,  0644, lcd_mipi_state_debug_show, NULL),
+	__ATTR(mpmode,   0644,
+		lcd_mipi_mode_debug_show, lcd_mipi_mode_debug_store),
 };
 
 int lcd_class_creat(void)

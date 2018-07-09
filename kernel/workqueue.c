@@ -48,6 +48,7 @@
 #include <linux/nodemask.h>
 #include <linux/moduleparam.h>
 #include <linux/uaccess.h>
+#include <linux/nmi.h>
 
 #include "workqueue_internal.h"
 
@@ -2041,7 +2042,9 @@ __acquires(&pool->lock)
 #endif
 #ifdef CONFIG_AMLOGIC_MODIFY
 	if (!pwq) {
-		WARN_ONCE(1, "Warning: pool_workqueue is NULL!!!!!!!!!!!!.\n");
+		WARN_ONCE(1, "<%s> pwq_NULL <%lx> <%pf>, <%pf> %s\n",
+			__func__, atomic_long_read(&work->data),
+			work->func, worker->current_func, worker->desc);
 		return;
 	}
 
@@ -4146,6 +4149,22 @@ void workqueue_set_max_active(struct workqueue_struct *wq, int max_active)
 EXPORT_SYMBOL_GPL(workqueue_set_max_active);
 
 /**
+ * current_work - retrieve %current task's work struct
+ *
+ * Determine if %current task is a workqueue worker and what it's working on.
+ * Useful to find out the context that the %current task is running in.
+ *
+ * Return: work struct if %current task is a workqueue worker, %NULL otherwise.
+ */
+struct work_struct *current_work(void)
+{
+	struct worker *worker = current_wq_worker();
+
+	return worker ? worker->current_work : NULL;
+}
+EXPORT_SYMBOL(current_work);
+
+/**
  * current_is_workqueue_rescuer - is %current workqueue rescuer?
  *
  * Determine whether %current is a workqueue rescuer.  Can be used from
@@ -4441,6 +4460,12 @@ void show_workqueue_state(void)
 			if (pwq->nr_active || !list_empty(&pwq->delayed_works))
 				show_pwq(pwq);
 			spin_unlock_irqrestore(&pwq->pool->lock, flags);
+			/*
+			 * We could be printing a lot from atomic context, e.g.
+			 * sysrq-t -> show_workqueue_state(). Avoid triggering
+			 * hard lockup.
+			 */
+			touch_nmi_watchdog();
 		}
 	}
 
@@ -4468,6 +4493,12 @@ void show_workqueue_state(void)
 		pr_cont("\n");
 	next_pool:
 		spin_unlock_irqrestore(&pool->lock, flags);
+		/*
+		 * We could be printing a lot from atomic context, e.g.
+		 * sysrq-t -> show_workqueue_state(). Avoid triggering
+		 * hard lockup.
+		 */
+		touch_nmi_watchdog();
 	}
 
 	rcu_read_unlock_sched();

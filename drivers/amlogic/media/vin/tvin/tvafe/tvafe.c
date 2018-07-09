@@ -99,7 +99,7 @@ static int cutwindow_val_v_level4 = 24;
 static int cutwindow_val_h_level1 = 10;
 static int cutwindow_val_h_level2 = 18;
 static int cutwindow_val_h_level3 = 20;
-static int cutwindow_val_h_level4 = 48;
+static int cutwindow_val_h_level4 = 62;/*48-->62 for ntsc-m*/
 
 /*1: snow function on;*/
 /*0: off snow function*/
@@ -209,7 +209,8 @@ static int tvafe_get_v_fmt(void)
 		tvafe_pr_info("%s tvafe is not STABLE\n", __func__);
 		return 0;
 	}
-	fmt = tvafe_cvd2_get_format(&g_tvafe_info->cvd2);
+	if (g_tvafe_info)
+		fmt = tvafe_cvd2_get_format(&g_tvafe_info->cvd2);
 	return fmt;
 }
 #endif
@@ -250,7 +251,7 @@ int tvafe_dec_open(struct tvin_frontend_s *fe, enum tvin_port_e port)
 	/* set APB bus register accessing error exception */
 	tvafe_set_apb_bus_err_ctrl();
 	/**set cvd2 reset to high**/
-	/*tvafe_cvd2_hold_rst(&tvafe->cvd2);?????*/
+	/*tvafe_cvd2_hold_rst();?????*/
 
 	/* init tvafe registers */
 	tvafe_init_reg(&tvafe->cvd2, &devp->mem, port, devp->pinmux);
@@ -463,7 +464,7 @@ void tvafe_dec_close(struct tvin_frontend_s *fe)
 	aml_fe_hook_cvd(NULL, NULL, NULL);
 #endif
 	/**set cvd2 reset to high**/
-	tvafe_cvd2_hold_rst(&tvafe->cvd2);
+	tvafe_cvd2_hold_rst();
 	/**disable av out**/
 	tvafe_enable_avout(tvafe->parm.port, false);
 
@@ -553,6 +554,8 @@ int tvafe_dec_isr(struct tvin_frontend_s *fe, unsigned int hcnt64)
 #endif
 	if (tvafe->parm.info.fmt == TVIN_SIG_FMT_CVBS_PAL_I)
 		tvafe_cvd2_adj_hs(&tvafe->cvd2, hcnt64);
+	else if (tvafe->parm.info.fmt == TVIN_SIG_FMT_CVBS_NTSC_M)
+		tvafe_cvd2_adj_hs_ntsc(&tvafe->cvd2, hcnt64);
 
 	if ((port >= TVIN_PORT_CVBS0) && (port <= TVIN_PORT_CVBS3)) {
 		aspect_ratio = tvafe_cvd2_get_wss();
@@ -1358,7 +1361,7 @@ static int tvafe_drv_suspend(struct platform_device *pdev,
 		/*del_timer_sync(&tdevp->timer);*/
 
 		/**set cvd2 reset to high**/
-		tvafe_cvd2_hold_rst(&tdevp->tvafe.cvd2);
+		tvafe_cvd2_hold_rst();
 		/**disable av out**/
 		tvafe_enable_avout(tvafe->parm.port, false);
 	}
@@ -1382,7 +1385,7 @@ static int tvafe_drv_resume(struct platform_device *pdev)
 	adc_set_pll_reset();
 	tvafe_enable_module(true);
 	tdevp->flags &= (~TVAFE_POWERDOWN_IN_IDLE);
-	tvafe_clk_status = true;
+	tvafe_clk_status = false;
 	tvafe_pr_info("resume module\n");
 	return 0;
 }

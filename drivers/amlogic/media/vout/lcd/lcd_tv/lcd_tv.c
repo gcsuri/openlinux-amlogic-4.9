@@ -239,6 +239,26 @@ static void lcd_vmode_vinfo_update(enum vmode_e mode)
 	lcd_drv->lcd_info->htotal = pconf->lcd_basic.h_period;
 	lcd_drv->lcd_info->vtotal = pconf->lcd_basic.v_period;
 	lcd_drv->lcd_info->viu_mux = VIU_MUX_ENCL;
+	switch (pconf->lcd_timing.fr_adjust_type) {
+	case 0:
+		lcd_drv->lcd_info->fr_adj_type = VOUT_FR_ADJ_CLK;
+		break;
+	case 1:
+		lcd_drv->lcd_info->fr_adj_type = VOUT_FR_ADJ_HTOTAL;
+		break;
+	case 2:
+		lcd_drv->lcd_info->fr_adj_type = VOUT_FR_ADJ_VTOTAL;
+		break;
+	case 3:
+		lcd_drv->lcd_info->fr_adj_type = VOUT_FR_ADJ_COMBO;
+		break;
+	case 4:
+		lcd_drv->lcd_info->fr_adj_type = VOUT_FR_ADJ_HDMI;
+		break;
+	default:
+		lcd_drv->lcd_info->fr_adj_type = VOUT_FR_ADJ_NONE;
+		break;
+	}
 
 	lcd_hdr_vinfo_update();
 }
@@ -308,18 +328,17 @@ static int lcd_set_current_vmode(enum vmode_e mode)
 	/* do not change mode value here, for bit mask is useful */
 	lcd_vmode_vinfo_update(mode & VMODE_MODE_BIT_MASK);
 
-	if (!(mode & VMODE_INIT_BIT_MASK)) {
-		switch (mode & VMODE_MODE_BIT_MASK) {
-		case VMODE_LCD:
+	if (VMODE_LCD == (mode & VMODE_MODE_BIT_MASK)) {
+		if (mode & VMODE_INIT_BIT_MASK) {
+			lcd_clk_gate_switch(1);
+		} else {
 			mutex_lock(&lcd_vout_mutex);
 			ret = lcd_drv->driver_change();
 			mutex_unlock(&lcd_vout_mutex);
-			break;
-		default:
-			ret = -EINVAL;
 		}
-	} else
-		lcd_clk_gate_switch(1);
+	} else {
+		ret = -EINVAL;
+	}
 
 	lcd_drv->lcd_status |= LCD_STATUS_VMODE_ACTIVE;
 
@@ -598,18 +617,14 @@ static int lcd_resume(void)
 			queue_work(lcd_drv->workqueue,
 				&(lcd_drv->lcd_resume_work));
 		} else {
-			mutex_lock(&lcd_drv->power_mutex);
-			LCDPR("Warning: no lcd workqueue\n");
-			lcd_resume_flag = 1;
-			aml_lcd_notifier_call_chain(LCD_EVENT_POWER_ON, NULL);
-			LCDPR("%s finished\n", __func__);
-			mutex_unlock(&lcd_drv->power_mutex);
+			schedule_work(&(lcd_drv->lcd_resume_work));
 		}
 	} else {
 		mutex_lock(&lcd_drv->power_mutex);
 		LCDPR("directly lcd late resume\n");
 		lcd_resume_flag = 1;
 		aml_lcd_notifier_call_chain(LCD_EVENT_POWER_ON, NULL);
+		lcd_if_enable_retry(lcd_drv->lcd_config);
 		LCDPR("%s finished\n", __func__);
 		mutex_unlock(&lcd_drv->power_mutex);
 	}
@@ -677,6 +692,7 @@ static void lcd_vinfo_update_default(void)
 		vinfo->video_clk = 0;
 		vinfo->htotal = h_total;
 		vinfo->vtotal = v_total;
+		vinfo->fr_adj_type = VOUT_FR_ADJ_NONE;
 	}
 }
 
@@ -819,7 +835,7 @@ static int lcd_config_load_from_dts(struct lcd_config_s *pconf,
 	}
 	ret = of_property_read_u32_array(child, "range_setting", &para[0], 6);
 	if (ret) {
-		LCDERR("no range_setting\n");
+		LCDPR("no range_setting\n");
 		pconf->lcd_basic.h_period_min = pconf->lcd_basic.h_period;
 		pconf->lcd_basic.h_period_max = pconf->lcd_basic.h_period;
 		pconf->lcd_basic.v_period_min = pconf->lcd_basic.v_period;
@@ -881,11 +897,11 @@ static int lcd_config_load_from_dts(struct lcd_config_s *pconf,
 				lvdsconf->port_swap = para[3];
 			}
 		} else {
-				lvdsconf->lvds_repack = para[0];
-				lvdsconf->dual_port = para[1];
-				lvdsconf->pn_swap = para[2];
-				lvdsconf->port_swap = para[3];
-				lvdsconf->lane_reverse = para[4];
+			lvdsconf->lvds_repack = para[0];
+			lvdsconf->dual_port = para[1];
+			lvdsconf->pn_swap = para[2];
+			lvdsconf->port_swap = para[3];
+			lvdsconf->lane_reverse = para[4];
 		}
 		ret = of_property_read_u32_array(child, "phy_attr",
 			&para[0], 4);
@@ -904,8 +920,8 @@ static int lcd_config_load_from_dts(struct lcd_config_s *pconf,
 				lvdsconf->phy_clk_preem = 0;
 				if (lcd_debug_print_flag) {
 					LCDPR("phy vswing=0x%x, preem=0x%x\n",
-					lvdsconf->phy_vswing,
-					lvdsconf->phy_preem);
+						lvdsconf->phy_vswing,
+						lvdsconf->phy_preem);
 				}
 			}
 		} else {
@@ -967,9 +983,9 @@ static int lcd_config_load_from_dts(struct lcd_config_s *pconf,
 		if (vx1_conf->ctrl_flag & 0x7) {
 			ret = of_property_read_u32_array(child,
 				"vbyone_ctrl_timing", &para[0], 3);
-			if (ret)
+			if (ret) {
 				LCDPR("failed to get vbyone_ctrl_timing\n");
-			else {
+			} else {
 				vx1_conf->power_on_reset_delay = para[0];
 				vx1_conf->hpd_data_delay = para[1];
 				vx1_conf->cdr_training_hold = para[2];
@@ -1353,6 +1369,10 @@ static int lcd_frame_rate_adjust_notifier(struct notifier_block *nb,
 	if ((event & LCD_EVENT_FRAME_RATE_ADJUST) == 0)
 		return NOTIFY_DONE;
 
+	if (data == NULL) {
+		LCDERR("%s: data is NULL\n", __func__);
+		return NOTIFY_DONE;
+	}
 	sync_duration = (unsigned int *)data;
 	lcd_set_vinfo(*sync_duration);
 

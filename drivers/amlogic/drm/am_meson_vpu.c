@@ -25,6 +25,9 @@
 #include <linux/of_device.h>
 #include <linux/of.h>
 #include <linux/component.h>
+#include <linux/of_reserved_mem.h>
+#include <linux/dma-contiguous.h>
+#include <linux/cma.h>
 #ifdef CONFIG_DRM_MESON_USE_ION
 #include <ion/ion_priv.h>
 #endif
@@ -213,7 +216,26 @@ static struct osd_device_data_s osd_g12a = {
 	.has_viu2 = 1,
 };
 
+static struct osd_device_data_s osd_g12b = {
+	.cpu_id = __MESON_CPU_MAJOR_ID_G12B,
+	.osd_ver = OSD_HIGH_ONE,
+	.afbc_type = MALI_AFBC,
+	.osd_count = 3,
+	.has_deband = 1,
+	.has_lut = 1,
+	.has_rdma = 1,
+	.has_dolby_vision = 0,
+	.osd_fifo_len = 64, /* fifo len 64*8 = 512 */
+	.vpp_fifo_len = 0xfff,/* 2048 */
+	.dummy_data = 0x00808000,
+	.has_viu2 = 1,
+};
+
 static struct osd_device_data_s osd_meson_dev;
+static u32 logo_memsize;
+static struct page *logo_page;
+static struct delayed_work osd_dwork;
+static struct platform_device *gp_dev;
 
 int am_meson_crtc_dts_info_set(const void *dt_match_data)
 {
@@ -392,6 +414,8 @@ static const struct drm_plane_helper_funcs am_osd_helper_funcs = {
 static const uint32_t supported_drm_formats[] = {
 	DRM_FORMAT_ARGB8888,
 	DRM_FORMAT_XRGB8888,
+	DRM_FORMAT_ABGR8888,
+	DRM_FORMAT_XBGR8888,
 	DRM_FORMAT_RGB888,
 	DRM_FORMAT_RGB565,
 };
@@ -669,6 +693,20 @@ static irqreturn_t am_meson_vpu_irq(int irq, void *arg)
 	return IRQ_HANDLED;
 }
 
+static void mem_free_work(struct work_struct *work)
+{
+	if (logo_memsize > 0) {
+#ifdef CONFIG_CMA
+		pr_info("%s, free memory: addr:0x%x\n",
+			__func__, logo_memsize);
+
+		dma_release_from_contiguous(&(gp_dev->dev),
+			logo_page,
+			logo_memsize >> PAGE_SHIFT);
+#endif
+	}
+}
+
 static int am_meson_vpu_bind(struct device *dev,
 				struct device *master, void *data)
 {
@@ -676,7 +714,9 @@ static int am_meson_vpu_bind(struct device *dev,
 	struct drm_device *drm_dev = data;
 	struct meson_drm *private = drm_dev->dev_private;
 	struct am_meson_crtc *amcrtc;
-
+#ifdef CONFIG_CMA
+	struct cma *cma;
+#endif
 	int ret, irq;
 
 	/* Allocate crtc struct */
@@ -692,6 +732,44 @@ static int am_meson_vpu_bind(struct device *dev,
 
 	dev_set_drvdata(dev, amcrtc);
 
+	/* init reserved memory */
+	ret = of_reserved_mem_device_init(&pdev->dev);
+	if (ret != 0)
+		dev_err(dev, "failed to init reserved memory\n");
+	else {
+#ifdef CONFIG_CMA
+		gp_dev = pdev;
+		cma = dev_get_cma_area(&pdev->dev);
+		if (cma) {
+			logo_memsize = cma_get_size(cma);
+			pr_info("reserved memory base:0x%llx, size:0x%x\n",
+				cma_get_base(cma), logo_memsize);
+			if (logo_memsize > 0) {
+				logo_page = dma_alloc_from_contiguous(
+					&pdev->dev,
+					logo_memsize >> PAGE_SHIFT,
+					0);
+				if (!logo_page) {
+					pr_err("allocate buffer failed:%d\n",
+						logo_memsize);
+				}
+			}
+		} else
+			pr_info("------ NO CMA\n");
+#endif
+	}
+
+	ret = am_meson_plane_create(private);
+	if (ret)
+		return ret;
+
+	ret = am_meson_crtc_create(amcrtc);
+	if (ret)
+		return ret;
+
+	am_meson_register_crtc_funcs(private->crtc, &meson_private_crtc_funcs);
+
+	/*vsync irq.*/
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0) {
 		dev_err(dev, "cannot find irq for vpu\n");
@@ -706,15 +784,8 @@ static int am_meson_vpu_bind(struct device *dev,
 	/* IRQ is initially disabled; it gets enabled in crtc_enable */
 	disable_irq(amcrtc->irq);
 
-	ret = am_meson_plane_create(private);
-	if (ret)
-		return ret;
-
-	ret = am_meson_crtc_create(amcrtc);
-	if (ret)
-		return ret;
-
-	am_meson_register_crtc_funcs(private->crtc, &meson_private_crtc_funcs);
+	INIT_DELAYED_WORK(&osd_dwork, mem_free_work);
+	schedule_delayed_work(&osd_dwork, msecs_to_jiffies(60 * 1000));
 
 	return 0;
 }
@@ -749,6 +820,8 @@ static const struct of_device_id am_meson_vpu_driver_dt_match[] = {
 	 .data = &osd_axg, },
 	{ .compatible = "amlogic,meson-g12a-vpu",
 	 .data = &osd_g12a, },
+	{ .compatible = "amlogic,meson-g12b-vpu",
+	.data = &osd_g12b, },
 	{},
 };
 MODULE_DEVICE_TABLE(of, am_meson_vpu_driver_dt_match);

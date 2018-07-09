@@ -23,12 +23,14 @@
 /* the MSB is represent vmode set by vmode_init */
 #define	VMODE_INIT_BIT_MASK	0x8000
 #define	VMODE_MODE_BIT_MASK	0xff
+#define VMODE_NULL_DISP_MAX	2
 
 enum vmode_e {
 	VMODE_HDMI = 0,
 	VMODE_CVBS,
 	VMODE_LCD,
 	VMODE_NULL, /* null mode is used as temporary witch mode state */
+	VMODE_INVALID,
 	VMODE_MAX,
 	VMODE_INIT_NULL,
 	VMODE_MASK = 0xFF,
@@ -39,6 +41,16 @@ enum viu_mux_e {
 	VIU_MUX_ENCI,
 	VIU_MUX_ENCP,
 	VIU_MUX_MAX,
+};
+
+enum vout_fr_adj_type_e {
+	VOUT_FR_ADJ_CLK = 0,
+	VOUT_FR_ADJ_HTOTAL,
+	VOUT_FR_ADJ_VTOTAL,
+	VOUT_FR_ADJ_COMBO, /* vtotal + htotal + clk */
+	VOUT_FR_ADJ_HDMI,  /* 50<->60: htotal; 60<->59.94: clk */
+	VOUT_FR_ADJ_NONE,  /* disable fr_adj */
+	VOUT_FR_ADJ_MAX,
 };
 
 #define SUPPORT_2020	0x01
@@ -184,6 +196,7 @@ struct vinfo_s {
 	u32 video_clk;
 	u32 htotal;
 	u32 vtotal;
+	enum vout_fr_adj_type_e fr_adj_type;
 	enum color_fmt_e viu_color_fmt;
 	enum viu_mux_e viu_mux;
 	struct master_display_info_s master_display_info;

@@ -34,6 +34,8 @@
 #include <linux/amlogic/cpu_version.h>
 #include <linux/amlogic/iomap.h>
 #include <linux/amlogic/clk_measure.h>
+#include <linux/amlogic/scpi_protocol.h>
+#include <linux/spinlock.h>
 
 #undef pr_fmt
 #define pr_fmt(fmt) "clkmsr: " fmt
@@ -41,6 +43,9 @@
 void __iomem *msr_clk_reg0;
 void __iomem *msr_clk_reg2;
 void __iomem *msr_clk_reg3;
+void __iomem *msr_ring_reg0;
+
+static DEFINE_SPINLOCK(clk_measure_lock);
 
 #define CLKMSR_DEVICE_NAME	"clkmsr"
 unsigned int clk_msr_index = 0xff;
@@ -113,6 +118,38 @@ static unsigned int gxbb_clk_util_clk_msr(unsigned int clk_mux)
 	msr = (readl_relaxed(msr_clk_reg2)+31)&0x000FFFFF;
     /* Return value in MHz*measured_val */
 	return (msr>>6)*1000000;
+
+}
+
+static unsigned int meson_clk_util_ring_msr(unsigned int clk_mux)
+{
+	unsigned int  msr;
+	unsigned int regval = 0;
+	unsigned int val;
+
+	writel_relaxed(0, msr_clk_reg0);
+    /* Set the measurement gate to 50uS */
+	val = readl_relaxed(msr_clk_reg0);
+	val = (val & (~0xFFFF)) | (10000-1);
+	writel_relaxed(val, msr_clk_reg0);
+    /* Disable continuous measurement */
+    /* disable interrupts */
+	val = readl_relaxed(msr_clk_reg0);
+	val = val & (~((1<<18)|(1<<17)));
+	writel_relaxed(val, msr_clk_reg0);
+	val = readl_relaxed(msr_clk_reg0);
+	val = (val & (~(0x7f<<20))) | (clk_mux<<20)|(1<<19)|(1<<16);
+	writel_relaxed(val, msr_clk_reg0);
+    /* Wait for the measurement to be done */
+	do {
+		regval = readl_relaxed(msr_clk_reg0);
+	} while (regval & (1 << 31));
+    /* disable measuring */
+	val = readl_relaxed(msr_clk_reg0);
+	val = val & (~(1<<16));
+	msr = (readl_relaxed(msr_clk_reg2)+31)&0x000FFFFF;
+    /* Return value in MHz*measured_val */
+	return (msr / 10);
 
 }
 
@@ -838,10 +875,214 @@ int g12a_clk_measure(struct seq_file *s, void *what, unsigned int index)
 	return 0;
 }
 
-int  meson_clk_measure(unsigned int clk_mux)
+int g12_ring_measure(struct seq_file *s, void *what, unsigned int index)
+{
+	static const char * const clk_table[] = {
+			[11] = "sys_cpu_ring_osc_clk[1] ",
+			[10] = "sys_cpu_ring_osc_clk[0] ",
+			[9] = "am_ring_osc_clk_out_ee[9] ",
+			[8] = "am_ring_osc_clk_out_ee[8] ",
+			[7] = "am_ring_osc_clk_out_ee[7] ",
+			[6] = "am_ring_osc_clk_out_ee[6] ",
+			[5] = "am_ring_osc_clk_out_ee[5] ",
+			[4] = "am_ring_osc_clk_out_ee[4] ",
+			[3] = "am_ring_osc_clk_out_ee[3] ",
+			[2] = "am_ring_osc_clk_out_ee[2] ",
+			[1] = "am_ring_osc_clk_out_ee[1] ",
+			[0] = "am_ring_osc_clk_out_ee[0] ",
+		};
+	const int tb[] = {0, 1, 2, 99, 100, 101, 102, 103, 104, 105, 3, 33};
+	unsigned long i;
+	unsigned char ringinfo[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+
+	/*RING_OSCILLATOR       0x7f: set slow ring*/
+	if (msr_ring_reg0 != NULL) {
+		writel_relaxed(0x555555, msr_ring_reg0);
+		for (i = 0; i < 12; i++)
+			seq_printf(s, "%s	:%10d	KHz\n",
+			  clk_table[i], meson_clk_util_ring_msr(tb[i]));
+	} else {
+		seq_puts(s, "fail test osc ring info\n");
+	}
+
+	if (scpi_get_ring_value(ringinfo) != 0) {
+		seq_puts(s, "fail get osc ring efuse info\n");
+		return 0;
+	}
+
+	seq_puts(s, "osc ring efuse info:\n");
+
+	for (i = 0; i < 8; i++)
+		seq_printf(s, "0x%x ", ringinfo[i]);
+	seq_puts(s, "\n");
+
+	/*efuse to test value*/
+	seq_puts(s, "ee[9], ee[1], ee[0], cpu[1], cpu[0], iddee, iddcpu\n");
+
+	for (i = 1; i <= 5; i++)
+		seq_printf(s, "%d KHz ", (ringinfo[i] * 20));
+
+	for (i = 6; i <= 7; i++)
+		seq_printf(s, "%d uA ", (ringinfo[i] * 200));
+
+	seq_puts(s, "\n");
+
+	return 0;
+}
+
+int g12b_clk_measure(struct seq_file *s, void *what, unsigned int index)
+{
+	static const char * const clk_table[] = {
+		[126] = "mipi_csi_phy1_clk_out",
+		[125] = "mipi_csi_phy0_clk_out",
+		[124] = "cts_gdc_core_clk",
+		[123] = "cts_gdc_axi_clk",
+		[122] = "mod_audio_pdm_dclk_o       ",
+		[121] = "audio_spdifin_mst_clk      ",
+		[120] = "audio_spdifout_mst_clk     ",
+		[119] = "audio_spdifout_b_mst_clk   ",
+		[118] = "audio_pdm_sysclk           ",
+		[117] = "audio_resample_clk         ",
+		[116] = "audio_tdmin_a_sclk         ",
+		[115] = "audio_tdmin_b_sclk         ",
+		[114] = "audio_tdmin_c_sclk         ",
+		[113] = "audio_tdmin_lb_sclk        ",
+		[112] = "audio_tdmout_a_sclk        ",
+		[111] = "audio_tdmout_b_sclk        ",
+		[110] = "audio_tdmout_c_sclk        ",
+		[109] = "c_alocker_out_clk          ",
+		[108] = "c_alocker_in_clk           ",
+		[107] = "au_dac_clk_g128x           ",
+		[106] = "ephy_test_clk              ",
+		[105] = "am_ring_osc_clk_out_ee[9]  ",
+		[104] = "am_ring_osc_clk_out_ee[8]  ",
+		[103] = "am_ring_osc_clk_out_ee[7]  ",
+		[102] = "am_ring_osc_clk_out_ee[6]  ",
+		[101] = "am_ring_osc_clk_out_ee[5]  ",
+		[100] = "am_ring_osc_clk_out_ee[4]  ",
+		[99] = "am_ring_osc_clk_out_ee[3]   ",
+		[98] = "cts_ts_clk                 ",
+		[97] = "cts_vpu_clkb_tmp           ",
+		[96] = "cts_vpu_clkb               ",
+		[95] = "eth_phy_plltxclk           ",
+		[94] = "eth_phy_rxclk              ",
+		[93] = "1'b0                       ",
+		[92] = "sys_pllB_div16             ",
+		[91] = "sys_cpuB_clk_div16         ",
+		[90] = "cts_hdmitx_sys_clk         ",
+		[89] = "HDMI_CLK_TODIG             ",
+		[88] = "cts_mipi_isp_clk           ",
+		[87] = "1'b0                       ",
+		[86] = "cts_vipnanoq_core_clk      ",
+		[85] = "cts_vipnanoq_axi_clk       ",
+		[84] = "co_tx_clk                  ",
+		[83] = "co_rx_clk                  ",
+		[82] = "cts_ge2d_clk               ",
+		[81] = "cts_vapbclk                ",
+		[80] = "rng_ring_osc_clk[3]        ",
+		[79] = "rng_ring_osc_clk[2]        ",
+		[78] = "rng_ring_osc_clk[1]        ",
+		[77] = "rng_ring_osc_clk[0]        ",
+		[76] = "cts_cci_clk                ",
+		[75] = "cts_hevcf_clk              ",
+		[74] = "cts_mipi_csi_phy_clk       ",
+		[73] = "cts_pwm_C_clk              ",
+		[72] = "cts_pwm_D_clk              ",
+		[71] = "cts_pwm_E_clk              ",
+		[70] = "cts_pwm_F_clk              ",
+		[69] = "cts_hdcp22_skpclk          ",
+		[68] = "cts_hdcp22_esmclk          ",
+		[67] = "cts_dsi_phy_clk            ",
+		[66] = "cts_vid_lock_clk           ",
+		[65] = "cts_spicc_0_clk            ",
+		[64] = "cts_spicc_1_clk            ",
+		[63] = "cts_dsi_meas_clk           ",
+		[62] = "cts_hevcb_clk              ",
+		[61] = "gpio_clk_msr               ",
+		[60] = "1'b0                       ",
+		[59] = "cts_hcodec_clk             ",
+		[58] = "cts_wave420l_bclk          ",
+		[57] = "cts_wave420l_cclk          ",
+		[56] = "cts_wave420l_aclk          ",
+		[55] = "vid_pll_div_clk_out        ",
+		[54] = "cts_vpu_clkc               ",
+		[53] = "cts_sd_emmc_clk_A          ",
+		[52] = "cts_sd_emmc_clk_B          ",
+		[51] = "cts_sd_emmc_clk_C          ",
+		[50] = "mp3_clk_out                ",
+		[49] = "mp2_clk_out                ",
+		[48] = "mp1_clk_out                ",
+		[47] = "ddr_dpll_pt_clk            ",
+		[46] = "cts_vpu_clk                ",
+		[45] = "cts_pwm_A_clk              ",
+		[44] = "cts_pwm_B_clk              ",
+		[43] = "fclk_div5                  ",
+		[42] = "mp0_clk_out                ",
+		[41] = "mac_eth_rx_clk_rmii        ",
+		[40] = "1'b0                       ",
+		[39] = "cts_bt656_clk0             ",
+		[38] = "cts_vdin_meas_clk          ",
+		[37] = "cts_cdac_clk_c             ",
+		[36] = "cts_hdmi_tx_pixel_clk      ",
+		[35] = "cts_mali_clk               ",
+		[34] = "eth_mppll_50m_ckout        ",
+		[33] = "sys_cpu_ring_osc_clk[1]    ",
+		[32] = "cts_vdec_clk               ",
+		[31] = "mpll_clk_test_out          ",
+		[30] = "pcie_clk_inn               ",
+		[29] = "pcie_clk_inp               ",
+		[28] = "cts_sar_adc_clk            ",
+		[27] = "co_clkin_to_mac            ",
+		[26] = "sc_clk_int                 ",
+		[25] = "cts_eth_clk_rmii           ",
+		[24] = "cts_eth_clk125Mhz          ",
+		[23] = "mpll_clk_50m               ",
+		[22] = "mac_eth_phy_ref_clk        ",
+		[21] = "lcd_an_clk_ph3             ",
+		[20] = "rtc_osc_clk_out            ",
+		[19] = "lcd_an_clk_ph2             ",
+		[18] = "sys_cpu_clk_div16          ",
+		[17] = "sys_pll_div16              ",
+		[16] = "cts_FEC_CLK_2              ",
+		[15] = "cts_FEC_CLK_1              ",
+		[14] = "cts_FEC_CLK_0              ",
+		[13] = "mod_tcon_clko              ",
+		[12] = "hifi_pll_clk               ",
+		[11] = "mac_eth_tx_clk             ",
+		[10] = "cts_vdac_clk               ",
+		[9] = "cts_encl_clk             ",
+		[8] = "cts_encp_clk             ",
+		[7] = "clk81                    ",
+		[6] = "cts_enci_clk             ",
+		[5] = "1'b0                     ",
+		[4] = "gp0_pll_clk              ",
+		[3] = "sys_cpu_ring_osc_clk[0]  ",
+		[2] = "am_ring_osc_clk_out_ee[2]",
+		[1] = "am_ring_osc_clk_out_ee[1]",
+		[0] = "am_ring_osc_clk_out_ee[0]",
+	};
+	int  i;
+	int len = sizeof(clk_table)/sizeof(char *);
+
+	if (index  == 0xff) {
+		for (i = 0; i < len; i++)
+			seq_printf(s, "[%2d][%10d]%s\n",
+				   i, gxbb_clk_util_clk_msr(i),
+					clk_table[i]);
+		return 0;
+	}
+	seq_printf(s, "[%10d]%s\n", gxbb_clk_util_clk_msr(index),
+		   clk_table[index]);
+	clk_msr_index = 0xff;
+	return 0;
+}
+
+int meson_clk_measure(unsigned int clk_mux)
 {
 	int clk_val;
+	unsigned long flags;
 
+	spin_lock_irqsave(&clk_measure_lock, flags);
 	switch (get_cpu_type()) {
 	case MESON_CPU_MAJOR_ID_M8B:
 		clk_val = m8b_clk_util_clk_msr(clk_mux);
@@ -850,6 +1091,7 @@ int  meson_clk_measure(unsigned int clk_mux)
 	case MESON_CPU_MAJOR_ID_GXM:
 	case MESON_CPU_MAJOR_ID_TXLX:
 	case MESON_CPU_MAJOR_ID_G12A:
+	case MESON_CPU_MAJOR_ID_G12B:
 		clk_val = gxbb_clk_util_clk_msr(clk_mux);
 		break;
 	case MESON_CPU_MAJOR_ID_AXG:
@@ -860,6 +1102,8 @@ int  meson_clk_measure(unsigned int clk_mux)
 		clk_val = 0;
 		break;
 	}
+	spin_unlock_irqrestore(&clk_measure_lock, flags);
+
 	return clk_val;
 
 }
@@ -879,8 +1123,18 @@ static int dump_clk(struct seq_file *s, void *what)
 		txlx_clk_measure(s, what, clk_msr_index);
 	else if (get_cpu_type() == MESON_CPU_MAJOR_ID_G12A)
 		g12a_clk_measure(s, what, clk_msr_index);
+	else if (get_cpu_type() == MESON_CPU_MAJOR_ID_G12B)
+		g12b_clk_measure(s, what, clk_msr_index);
 	return 0;
 }
+
+static int dump_ring(struct seq_file *s, void *what)
+{
+	if (get_cpu_type() == MESON_CPU_MAJOR_ID_G12A)
+		g12_ring_measure(s, what, clk_msr_index);
+	return 0;
+}
+
 
 static ssize_t clkmsr_write(struct file *file, const char __user *userbuf,
 				   size_t count, loff_t *ppos)
@@ -906,10 +1160,22 @@ static ssize_t clkmsr_write(struct file *file, const char __user *userbuf,
 	return count;
 }
 
+static ssize_t ringmsr_write(struct file *file, const char __user *userbuf,
+				   size_t count, loff_t *ppos)
+{
+	return count;
+}
+
 static int clkmsr_open(struct inode *inode, struct file *file)
 {
 	return single_open(file, dump_clk, inode->i_private);
 }
+
+static int ringmsr_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, dump_ring, inode->i_private);
+}
+
 
 static const struct file_operations clkmsr_file_ops = {
 	.open		= clkmsr_open,
@@ -919,10 +1185,20 @@ static const struct file_operations clkmsr_file_ops = {
 	.release	= single_release,
 };
 
+static const struct file_operations ringmsr_file_ops = {
+	.open		= ringmsr_open,
+	.read		= seq_read,
+	.write		= ringmsr_write,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+
 static int aml_clkmsr_probe(struct platform_device *pdev)
 {
 	static struct dentry *debugfs_root;
 	struct device_node *np;
+	u32 ringctrl;
 
 	np = pdev->dev.of_node;
 	debugfs_root = debugfs_create_dir("aml_clkmsr", NULL);
@@ -931,14 +1207,27 @@ static int aml_clkmsr_probe(struct platform_device *pdev)
 		debugfs_root = NULL;
 		return -1;
 	}
-
 	debugfs_create_file("clkmsr", S_IFREG | 0444,
 			    debugfs_root, NULL, &clkmsr_file_ops);
+
+	debugfs_create_file("ringmsr", S_IFREG | 0444,
+			    debugfs_root, NULL, &ringmsr_file_ops);
 
 	msr_clk_reg0 = of_iomap(np, 0);
 	msr_clk_reg2 = of_iomap(np, 1);
 	pr_info("msr_clk_reg0=%p,msr_clk_reg2=%p\n",
 		msr_clk_reg0, msr_clk_reg2);
+
+	if (of_property_read_u32(pdev->dev.of_node,
+				"ringctrl", &ringctrl)) {
+		dev_err(&pdev->dev,
+			"failed to get msr ring reg0\n");
+		msr_ring_reg0 = NULL;
+	} else {
+		msr_ring_reg0 = ioremap(ringctrl, 1);
+		pr_info("msr_ring_reg0=%p\n", msr_ring_reg0);
+	}
+
 	return 0;
 }
 

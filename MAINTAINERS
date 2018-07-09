@@ -13505,6 +13505,7 @@ F: drivers/amlogic/cpufreq/*
 AMLOGIC driver for memory extend
 M: Tao Zeng <tao.zeng@amlogic.com>
 F: drivers/amlogic/memory_ext/*
+F: include/linux/amlogic/ramdump.h
 
 AMLOGIC driver for memory extend
 M: Tao Zeng <tao.zeng@amlogic.com>
@@ -13673,6 +13674,10 @@ F:	drivers/amlogic/mtd/boot.c
 AMLOGIC GPU DEVICETREE
 M:	Jiyu Yang <jiyu.yang@amlogic.com>
 F:	arch/arm64/boot/dts/amlogic/mesongxtvbb-gpu-t83x.dtsi
+
+AMLOGIC GPU SYSTRACE
+M:	Binqi Zhang <binqi.zhang@amlogic.com>
+F:	include/trace/events/meson_atrace.h
 
 AMLOGIC VRTC DRIVER
 M:	Yun Cai <yun.cai@amlogic.com>
@@ -14273,6 +14278,10 @@ F:	drivers/amlogic/input/touchscreen/focaltech_touch/*
 F:	drivers/amlogic/input/touchscreen/goodix_gt1x/*
 F:	drivers/amlogic/input/touchscreen/goodix_gt9xx/*
 
+AMLOGIC ADD Q200 buildroot DTS
+M:      Wenbiao <wenbiao.zhang@amlogic.com>
+F:      arch/arm64/boot/dts/amlogic/gxm_q200_2g_buildroot.dts
+
 AMLOGIC ADD LCD_EXTERN P070ACB DRIVER
 M:	Weiming Liu <weiming.liu@amlogic.com>
 F:	drivers/amlogic/media/vout/lcd/lcd_extern/mipi_P070ACB.c
@@ -14389,6 +14398,10 @@ AMLOGIC G12A Media codec io bus
 M:	Nanxin Qin <nanxin.qin@amlogic.com>
 F:	include/linux/amlogic/media/registers/regs/efuse_regs.h
 
+AMLOGIC Geometric Distorition Correction
+M:	Jiyu Yang <Jiyu.Yang@amlogic.com>
+F:	drivers/amlogic/media/gdc/*
+
 AMLOGIC G12A CVBS DRIVER
 M:	Nian Jing <nian.jing@amlogic.com>
 F:	drivers/amlogic/media/vout/cvbs/
@@ -14412,9 +14425,86 @@ F:	drivers/amlogic/media/vout/lcd/lcd_extern/mipi_TL050FHV02CT.c
 
 AMLOGIC ATV DEMOD DRIVER
 M:      nengwen.chen <nengwen.chen@amlogic.com>
-F:      drivers/amlogic/atv_demod/*
 F:      include/linux/amlogic/aml_atvdemod.h
+F:      drivers/amlogic/atv_demod/*
+
+AMLOGIC ADD EXT MIPI DEFAULT DRIVER
+M:      Weiming Liu <weiming.liu@amlogic.com>
+F:      drivers/amlogic/media/vout/lcd/lcd_extern/mipi_default.c
 
 AMLOGIC G12A X2 U211 buildroot dts
 M:     wenbiao zhang <wenbiao.zhang@amlogic.com>
 F:     arch/arm64/boot/dts/amlogic/g12a_s905y2_u221_buildroot.dts
+
+AMLOGIC LCD ADD TVCONFIG SUPPORT
+M:	Evoke Zhang <evoke.zhang@amlogic.com>
+F:	drivers/amlogic/media/vout/lcd/lcd_tv/lcd_tv.dts
+F:	drivers/amlogic/media/vout/lcd/lcd_tablet/aml_lcd.dts
+
+AMLOGIC ADD LDIM IW7027 DRIVER
+M:	Weiming Liu <weiming.liu@amlogic.com>
+F:	drivers/amlogic/media/vout/backlight/aml_ldim/iw7027_bl.c
+F:	drivers/amlogic/media/vout/backlight/aml_ldim/iw7027_bl.h
+
+AMLOGIC DTV DEMOD DRIVER
+M:      Jihong Sui <jihong.sui@amlogic.com>
+F:      include/uapi/linux/dvb/aml_demod.h
+F:      drivers/amlogic/media/amldemod/*
+
+AMLOGIC DTV DEMOD DRIVER
+M:      Jihong Sui <jihong.sui@amlogic.com>
+F:      drivers/amlogic/media/amldemod/*
+F:      drivers/amlogic/media/dtv_demod/*
+
+AMLOGIC DEFENDKEY DRIVER
+M:	Zhongfu Luo <zhongfu.luo@amlogic.com>
+F:	drivers/amlogic/defendkey/*
+
+AMLOGIC DEBUG
+M: Jianxin Pan <jianxin.pan@amlogic.com>
+F:  drivers/amlogic/debug/
+
+AMLOGIC G12A spdif channel status
+M: xing wang<xing.wang@amlogic.com>
+F: arch/arm64/boot/dts/amlogic/g12a_*
+F: include/linux/amlogic/media/sound/spdif_info.h
+F: sound/soc/amlogic/auge*
+
+AMLOGIC TVIN vlock
+M:      Wenfeng Guo <wenfeng.guo@amlogic.com>
+F:      drivers/amlogic/media/enhancement/amvecm/vlock.c
+F:      drivers/amlogic/media/enhancement/amvecm/vlock.h
+
+AMLOGIC G12A X2 U211 buildroot dts
+M:     Sandy Luo <sandy.luo@amlogic.com>
+F:     arch/arm64/boot/dts/amlogic/g12a_s905x2_u211_512m.dts
+
+AMLOGIC TXLX T962E R321 buildroot dts
+M:     liangzhuo.xie <liangzhuo.xie@amlogic.com>
+F:     arch/arm64/boot/dts/amlogic/txlx_t962e_r321_buildroot.dts
+
+AMLOGIC G12B
+M: Yan Wang <yan.wang@amlogic.com>
+F: arch/arm64/boot/dts/amlogic/mesong12b.dtsi
+F: arch/arm64/boot/dts/amlogic/g12b_pxp.dts
+
+AMLOGIC Energy model
+M: Jianxin Pan <jianxin.pan@amlogic.com>
+F: arch/arm64/boot/dts/amlogic/g12b-sched-energy.dtsi
+
+AMLOGIC G12B skt/w400 dts
+M: Qiufang Dai <qiufang.dai@amlogic.com>
+F: arch/arm64/boot/dts/amlogic/g12b_a311d_skt.dts
+F: arch/arm64/boot/dts/amlogic/g12b_a311d_w400.dts
+
+AMLOGIC G12B clock
+M: Qiufang Dai <qiufang.dai@amlogic.com>
+F: drivers/amlogic/clk/g12b/*
+
+AMLOGIC LCD Driver
+M:	Evoke Zhang <evoke.zhang@amlogic.com>
+F:	arch/arm64/boot/dts/amlogic/mesong12b_skt-panel.dtsi
+
+AMLOGIC G12B w400 buildroot dts
+M: 	liangzhuo xie <liangzhuo.xie@amlogic.com>
+F:      arch/arm64/boot/dts/amlogic/g12b_a311d_w400_buildroot.dts

@@ -27,9 +27,10 @@ struct dvb_frontend;
 
 #define HHI_ATV_DMD_SYS_CLK_CNTL		0x10f3
 
-extern int atvdemod_debug_en;
 extern unsigned int reg_23cf; /* IIR filter */
 extern int broad_std_except_pal_m;
+extern unsigned int aud_std;
+extern unsigned int aud_mode;
 
 #define ATVDEMOD_INTERVAL	(HZ/100)	/*10ms, #define HZ 100*/
 

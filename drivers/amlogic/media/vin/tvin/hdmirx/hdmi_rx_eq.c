@@ -49,7 +49,10 @@ struct st_eq_data eq_ch2;
 enum eq_sts_e eq_sts = E_EQ_START;
 /* variable define*/
 int long_cable_best_setting = 6;
-int delay_ms_cnt = 10; /* 5 */
+int delay_ms_cnt = 5; /* 5 */
+MODULE_PARM_DESC(delay_ms_cnt, "\n delay_ms_cnt\n");
+module_param(delay_ms_cnt, int, 0664);
+
 int eq_max_setting = 7;
 int eq_dbg_ch0;
 int eq_dbg_ch1;
@@ -185,6 +188,7 @@ void eq_dwork_handler(struct work_struct *work)
 			if (eq_maxvsmin(eq_ch0.bestsetting,
 					eq_ch1.bestsetting,
 					eq_ch2.bestsetting) == 1) {
+				eq_sts = E_EQ_PASS;
 				if (log_level & EQ_LOG)
 					rx_pr("pass\n");
 				break;
@@ -199,9 +203,9 @@ void eq_dwork_handler(struct work_struct *work)
 		eq_ch2.bestsetting = ErrorcableSetting;
 		if (log_level & EQ_LOG)
 			rx_pr("EQ fail-retry\n");
+		eq_sts = E_EQ_FAIL;
 	}
 	eq_cfg();
-	eq_sts = E_EQ_FINISH;
 	/*rx_set_eq_run_state(E_EQ_FINISH);*/
 	/*return;*/
 }
@@ -324,7 +328,7 @@ uint8_t testType(uint16_t setting, struct st_eq_data *ch_data)
 uint8_t aquireEarlyCnt(uint16_t setting)
 {
 	uint16_t lockVector = 0x0001;
-	int timeout_cnt = 20;
+	int timeout_cnt = 10;
 
 	lockVector = lockVector << setting;
 	hdmi_rx_phy_ConfEqualSetting(lockVector);
@@ -488,13 +492,14 @@ int rx_eq_algorithm(void)
 		return 0;
 	}
 	if (pre_eq_freq == pll_rate) {
-		if ((eq_sts == E_EQ_FINISH) ||
+		if ((eq_sts == E_EQ_PASS) ||
 			(eq_sts == E_EQ_SAME)) {
 			eq_sts = E_EQ_SAME;
 			rx_pr("same pll rate\n");
 			return 0;
 		}
-	} else if ((pll_rate&0x2) == E_EQ_SD) {
+	}
+	if ((pll_rate&0x2) == E_EQ_SD) {
 		eq_sts = E_EQ_FINISH;
 		pre_eq_freq = pll_rate;
 		rx_pr("low pll rate\n");

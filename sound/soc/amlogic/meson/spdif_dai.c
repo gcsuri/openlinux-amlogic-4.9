@@ -50,16 +50,6 @@
 #include <linux/amlogic/media/sound/audin_regs.h>
 #include <linux/amlogic/media/sound/audio_iomap.h>
 
-/*
- * 0 --  other formats except(DD,DD+,DTS)
- * 1 --  DTS
- * 2 --  DD
- * 3 -- DTS with 958 PCM RAW package mode
- * 4 -- DD+
- */
-unsigned int IEC958_mode_codec;
-EXPORT_SYMBOL(IEC958_mode_codec);
-
 struct aml_spdif {
 	struct clk *clk_mpl1;
 	struct clk *clk_i958;
@@ -99,7 +89,7 @@ void aml_spdif_play(int samesrc)
 		uint div = 0;
 		static int iec958buf[DEFAULT_PLAYBACK_SIZE];
 		struct _aiu_958_raw_setting_t set;
-		struct _aiu_958_channel_status_t chstat;
+		struct iec958_chsts chstat;
 		struct snd_pcm_substream substream;
 		struct snd_pcm_runtime runtime;
 		int size = DEFAULT_PLAYBACK_SIZE;
@@ -130,7 +120,7 @@ void aml_spdif_play(int samesrc)
 			pr_info("set 4x audio clk for 958\n");
 			div = 1;
 		} else if (samesrc) {
-			pr_info("share the same clock\n");
+			pr_debug("share the same clock\n");
 			div = 2;
 		} else {
 			pr_info("set normal 512 fs /4 fs\n");
@@ -203,7 +193,7 @@ static int aml_dai_spdif_trigger(struct snd_pcm_substream *substream, int cmd,
 void aml_hw_iec958_init(struct snd_pcm_substream *substream, int samesrc)
 {
 	struct _aiu_958_raw_setting_t set;
-	struct _aiu_958_channel_status_t chstat;
+	struct iec958_chsts chstat;
 	unsigned int i2s_mode, iec958_mode;
 	unsigned int start, size;
 	int sample_rate;
@@ -266,7 +256,7 @@ void aml_hw_iec958_init(struct snd_pcm_substream *substream, int samesrc)
 		break;
 	};
 	audio_hw_958_enable(0);
-	pr_info("aml_hw_iec958_init,runtime->rate=%d, same source mode(%d)\n",
+	pr_debug("aml_hw_iec958_init,runtime->rate=%d, same source mode(%d)\n",
 	       runtime->rate, samesrc);
 
 	if (old_samplerate != sample_rate || samesrc != flag_samesrc) {
@@ -280,7 +270,7 @@ void aml_hw_iec958_init(struct snd_pcm_substream *substream, int samesrc)
 		pr_info("set 4x audio clk for 958\n");
 		div = 1;
 	} else if (samesrc) {
-		pr_info("share the same clock\n");
+		pr_debug("share the same clock\n");
 		div = 2;
 	} else {
 		pr_info("set normal 512 fs /4 fs\n");
@@ -309,11 +299,11 @@ void aml_hw_iec958_init(struct snd_pcm_substream *substream, int samesrc)
 		if (IEC958_mode_codec == 1) {
 			/* dts, use raw sync-word mode */
 			iec958_mode = AIU_958_MODE_RAW;
-			pr_info("iec958 mode RAW\n");
+			pr_debug("iec958 mode RAW\n");
 		} else {
 			/* ac3,use the same pcm mode as i2s configuration */
 			iec958_mode = AIU_958_MODE_PCM_RAW;
-			pr_info("iec958 mode %s\n",
+			pr_debug("iec958 mode %s\n",
 				(i2s_mode == AIU_I2S_MODE_PCM32) ? "PCM32_RAW"
 				: ((I2S_MODE == AIU_I2S_MODE_PCM24) ?
 				"PCM24_RAW"	: "PCM16_RAW"));
@@ -325,7 +315,7 @@ void aml_hw_iec958_init(struct snd_pcm_substream *substream, int samesrc)
 			iec958_mode = AIU_958_MODE_PCM24;
 		else
 			iec958_mode = AIU_958_MODE_PCM16;
-		pr_info("iec958 mode %s\n",
+		pr_debug("iec958 mode %s\n",
 		       (i2s_mode ==
 			AIU_I2S_MODE_PCM32) ? "PCM32" : ((i2s_mode ==
 							  AIU_I2S_MODE_PCM24) ?
@@ -508,9 +498,17 @@ static int aml_dai_spdif_prepare(struct snd_pcm_substream *substream,
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 		aml_hw_iec958_init(substream, 0);
 	} else {
-		audio_in_spdif_set_buf(runtime->dma_addr,
+		if (runtime->format == SNDRV_PCM_FORMAT_S16_LE) {
+			audio_in_spdif_set_buf(runtime->dma_addr,
 				       runtime->dma_bytes * 2, spdif_p->src);
-		memset((void *)runtime->dma_area, 0, runtime->dma_bytes * 2);
+			memset((void *)runtime->dma_area,
+				0, runtime->dma_bytes * 2);
+		} else {
+			audio_in_spdif_set_buf(runtime->dma_addr,
+				       runtime->dma_bytes, spdif_p->src);
+			memset((void *)runtime->dma_area,
+				0, runtime->dma_bytes);
+		}
 	}
 
 	return 0;
@@ -623,7 +621,8 @@ static struct snd_soc_dai_driver aml_spdif_dai[] = {
 			SNDRV_PCM_RATE_44100 |
 			SNDRV_PCM_RATE_48000 |
 			SNDRV_PCM_RATE_96000),
-			.formats = SNDRV_PCM_FMTBIT_S16_LE,
+			.formats = SNDRV_PCM_FMTBIT_S16_LE |
+				SNDRV_PCM_FMTBIT_S32_LE,
 		},
 		.ops = &spdif_dai_ops,
 		.suspend = aml_dai_spdif_suspend,

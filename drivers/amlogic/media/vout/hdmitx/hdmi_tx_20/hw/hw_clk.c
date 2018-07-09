@@ -27,6 +27,9 @@
 #include <linux/amlogic/media/vpu/vpu.h>
 #endif
 
+/* local frac_rate flag */
+static uint32_t frac_rate;
+
 /*
  * HDMITX Clock configuration
  */
@@ -161,6 +164,7 @@ void hdmitx_set_cts_hdcp22_clk(struct hdmitx_dev *hdev)
 	case MESON_CPU_ID_GXL:
 	case MESON_CPU_ID_GXM:
 	case MESON_CPU_ID_G12A:
+	case MESON_CPU_ID_G12B:
 	default:
 		hd_write_reg(P_HHI_HDCP22_CLK_CNTL, 0x01000100);
 	break;
@@ -419,10 +423,7 @@ static void set_gxtvbb_hpll_clk_out(unsigned int frac_rate, unsigned int clk)
 
 static void set_hpll_clk_out(unsigned int clk)
 {
-	uint32_t frac_rate;
 	struct hdmitx_dev *hdev = get_hdmitx_device();
-
-	frac_rate = hdev->frac_rate_policy;
 
 	pr_info("config HPLL = %d frac_rate = %d\n", clk, frac_rate);
 
@@ -439,6 +440,7 @@ static void set_hpll_clk_out(unsigned int clk)
 		set_gxl_hpll_clk_out(frac_rate, clk);
 		break;
 	case MESON_CPU_ID_G12A:
+	case MESON_CPU_ID_G12B:
 		set_g12a_hpll_clk_out(frac_rate, clk);
 		break;
 	default:
@@ -454,6 +456,10 @@ static void set_hpll_sspll(enum hdmi_vic vic)
 	struct hdmitx_dev *hdev = get_hdmitx_device();
 
 	switch (hdev->chip_type) {
+	case MESON_CPU_ID_G12A:
+	case MESON_CPU_ID_G12B:
+		set_hpll_sspll_g12a(vic);
+		break;
 	case MESON_CPU_ID_GXBB:
 		break;
 	case MESON_CPU_ID_GXTVBB:
@@ -496,6 +502,7 @@ static void set_hpll_od1(unsigned int div)
 		set_hpll_od1_gxl(div);
 		break;
 	case MESON_CPU_ID_G12A:
+	case MESON_CPU_ID_G12B:
 		set_hpll_od1_g12a(div);
 		break;
 	default:
@@ -533,6 +540,7 @@ static void set_hpll_od2(unsigned int div)
 		set_hpll_od2_gxl(div);
 		break;
 	case MESON_CPU_ID_G12A:
+	case MESON_CPU_ID_G12B:
 		set_hpll_od2_g12a(div);
 		break;
 	default:
@@ -570,6 +578,7 @@ static void set_hpll_od3(unsigned int div)
 		set_hpll_od3_gxl(div);
 		break;
 	case MESON_CPU_ID_G12A:
+	case MESON_CPU_ID_G12B:
 		set_hpll_od3_g12a(div);
 		break;
 	default:
@@ -730,15 +739,15 @@ static struct hw_enc_clk_val_group setting_enc_clk_val_24[] = {
 	{{HDMI_720x576p50_16x9,
 	  HDMI_720x480p60_16x9,
 	  HDMI_VIC_END},
-		4324320, 4, 4, 1, VID_PLL_DIV_5, 1, 2, 1, -1},
+		4324320, 4, 4, 1, VID_PLL_DIV_5, 1, 2, 2, -1},
 	{{HDMI_1280x720p50_16x9,
 	  HDMI_1280x720p60_16x9,
 	  HDMI_VIC_END},
-		5940000, 4, 2, 1, VID_PLL_DIV_5, 1, 2, 1, -1},
+		5940000, 4, 2, 1, VID_PLL_DIV_5, 1, 2, 2, -1},
 	{{HDMI_1920x1080i60_16x9,
 	  HDMI_1920x1080i50_16x9,
 	  HDMI_VIC_END},
-		5940000, 4, 2, 1, VID_PLL_DIV_5, 1, 2, 1, -1},
+		5940000, 4, 2, 1, VID_PLL_DIV_5, 1, 2, 2, -1},
 	{{HDMI_1920x1080p60_16x9,
 	  HDMI_1920x1080p50_16x9,
 	  HDMI_VIC_END},
@@ -782,15 +791,15 @@ static struct hw_enc_clk_val_group setting_enc_clk_val_30[] = {
 	{{HDMI_720x576p50_16x9,
 	  HDMI_720x480p60_16x9,
 	  HDMI_VIC_END},
-		5405400, 4, 4, 1, VID_PLL_DIV_6p25, 1, 2, 1, -1},
+		5405400, 4, 4, 1, VID_PLL_DIV_6p25, 1, 2, 2, -1},
 	{{HDMI_1280x720p50_16x9,
 	  HDMI_1280x720p60_16x9,
 	  HDMI_VIC_END},
-		3712500, 4, 1, 1, VID_PLL_DIV_6p25, 1, 2, 1, -1},
+		3712500, 4, 1, 1, VID_PLL_DIV_6p25, 1, 2, 2, -1},
 	{{HDMI_1920x1080i60_16x9,
 	  HDMI_1920x1080i50_16x9,
 	  HDMI_VIC_END},
-		3712500, 4, 1, 1, VID_PLL_DIV_6p25, 1, 2, 1, -1},
+		3712500, 4, 1, 1, VID_PLL_DIV_6p25, 1, 2, 2, -1},
 	{{HDMI_1920x1080p60_16x9,
 	  HDMI_1920x1080p50_16x9,
 	  HDMI_VIC_END},
@@ -828,15 +837,15 @@ static struct hw_enc_clk_val_group setting_enc_clk_val_36[] = {
 	{{HDMI_720x576p50_16x9,
 	  HDMI_720x480p60_16x9,
 	  HDMI_VIC_END},
-		3243240, 2, 4, 1, VID_PLL_DIV_7p5, 1, 2, 1, -1},
+		3243240, 2, 4, 1, VID_PLL_DIV_7p5, 1, 2, 2, -1},
 	{{HDMI_1280x720p50_16x9,
 	  HDMI_1280x720p60_16x9,
 	  HDMI_VIC_END},
-		4455000, 4, 1, 1, VID_PLL_DIV_7p5, 1, 2, 1, -1},
+		4455000, 4, 1, 1, VID_PLL_DIV_7p5, 1, 2, 2, -1},
 	{{HDMI_1920x1080i60_16x9,
 	  HDMI_1920x1080i50_16x9,
 	  HDMI_VIC_END},
-		4455000, 4, 1, 1, VID_PLL_DIV_7p5, 1, 2, 1, -1},
+		4455000, 4, 1, 1, VID_PLL_DIV_7p5, 1, 2, 2, -1},
 	{{HDMI_1920x1080p60_16x9,
 	  HDMI_1920x1080p50_16x9,
 	  HDMI_VIC_END},
@@ -967,9 +976,7 @@ static void hdmitx_set_clk_(struct hdmitx_dev *hdev)
 next:
 	hdmitx_set_cts_sys_clk(hdev);
 	set_hpll_clk_out(p_enc[j].hpll_clk_out);
-	/* 4K mode doesn't enable SS*/
-	if ((cd == COLORDEPTH_24B) && (hdev->sspll)
-		&& (p_enc[j].hpll_clk_out != 5940000))
+	if ((cd == COLORDEPTH_24B) && (hdev->sspll))
 		set_hpll_sspll(vic);
 	set_hpll_od1(p_enc[j].od1);
 	set_hpll_od2(p_enc[j].od2);
@@ -996,12 +1003,13 @@ static void hdmitx_check_frac_rate(struct hdmitx_dev *hdev)
 	enum hdmi_vic vic = hdev->cur_VIC;
 	struct hdmi_format_para *para = NULL;
 
+	frac_rate = hdev->frac_rate_policy;
 	para = hdmi_get_fmt_paras(vic);
 	if (para && (para->name) && likely_frac_rate_mode(para->name))
 		;
 	else {
-		pr_info("%s doesn't have frac_rate\n", para->name);
-		hdev->frac_rate_policy = 0;
+		pr_info("this mode doesn't have frac_rate\n");
+		frac_rate = 0;
 	}
 
 	pr_info("frac_rate = %d\n", hdev->frac_rate_policy);

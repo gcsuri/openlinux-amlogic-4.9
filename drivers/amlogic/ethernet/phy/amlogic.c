@@ -59,17 +59,18 @@ void internal_wol_init(struct phy_device *phydev)
 	val &= ~0x1000;
 	phy_write(phydev, 0x14, val);/*write data to wol register bank*/
 	/*write mac address*/
-	phy_write(phydev, SMI_ADDR_TSTWRITE, mac_addr[0] | mac_addr[1] << 8);
+	phy_write(phydev, SMI_ADDR_TSTWRITE, mac_addr[5] | mac_addr[4] << 8);
 	phy_write(phydev, 0x14, 0x4800 | 0x00);
-	phy_write(phydev, SMI_ADDR_TSTWRITE, mac_addr[2] | mac_addr[3] << 8);
+	phy_write(phydev, SMI_ADDR_TSTWRITE, mac_addr[3] | mac_addr[2] << 8);
 	phy_write(phydev, 0x14, 0x4800 | 0x01);
-	phy_write(phydev, SMI_ADDR_TSTWRITE, mac_addr[4] | mac_addr[5] << 8);
+	phy_write(phydev, SMI_ADDR_TSTWRITE, mac_addr[1] | mac_addr[0] << 8);
 	phy_write(phydev, 0x14, 0x4800 | 0x02);
 	/*enable wol*/
 	phy_write(phydev, SMI_ADDR_TSTWRITE, 0x9);
 	phy_write(phydev, 0x14, 0x4800 | 0x03);
 	/*enable interrupt*/
-	phy_write(phydev, 0x1E, 0xe00);
+	val = phy_read(phydev, 0x1E);
+	phy_write(phydev, 0x1E, val | 0xe00);
 }
 
 void internal_config(struct phy_device *phydev)
@@ -126,6 +127,7 @@ void reset_internal_phy(struct phy_device *phydev)
 	pr_info("reset phy\n");
 }
 
+unsigned int enable_wol_check = 1;
 static int internal_phy_read_status(struct phy_device *phydev)
 {
 	int err;
@@ -142,22 +144,28 @@ static int internal_phy_read_status(struct phy_device *phydev)
 	/*Bit 9:5: Read Address*/
 	/*Bit 4:0: Write Address*/
 	/*read wol bank reg12*/
-	val = ((1 << 15) | (1 << 11) | (1 << 10) | (12 << 5));
-	phy_write(phydev, 0x14, val);
-	wol_reg12 = phy_read(phydev, 0x15);
-	if (phydev->link) {
-		if ((wol_reg12 & 0x1000))
+
+	/*add enable/disable to stop the check for debug*/
+	/*cause this part will involve many issue*/
+	if (enable_wol_check) {
+		val = ((1 << 15) | (1 << 11) | (1 << 10) | (12 << 5));
+		phy_write(phydev, 0x14, val);
+		wol_reg12 = phy_read(phydev, 0x15);
+		if ((phydev->link) && (phydev->speed != SPEED_10)) {
+			if ((wol_reg12 & 0x1000))
+				reg12_error_count = 0;
+			if (!(wol_reg12 & 0x1000)) {
+				reg12_error_count++;
+				pr_info("wol_reg12[12]==0, error\n");
+			}
+			if (reg12_error_count >=
+					(phydev->drv->features & 0xff)) {
+				reg12_error_count = 0;
+				reset_internal_phy(phydev);
+			}
+		} else {
 			reg12_error_count = 0;
-		if (!(wol_reg12 & 0x1000)) {
-			reg12_error_count++;
-			pr_info("wol_reg12[12]==0, error\n");
 		}
-		if (reg12_error_count >= (phydev->drv->features & 0xff)) {
-			reg12_error_count = 0;
-			reset_internal_phy(phydev);
-		}
-	} else {
-		reg12_error_count = 0;
 	}
 	linkup = phydev->link;
 	err = genphy_update_link(phydev);
@@ -230,11 +238,30 @@ static int internal_phy_read_status(struct phy_device *phydev)
 
 static int internal_config_init(struct phy_device *phydev)
 {
-	/*internal_wol_init(phydev);*/
+	internal_wol_init(phydev);
 	internal_config(phydev);
 	return genphy_config_init(phydev);
 }
 
+unsigned int support_internal_phy_wol;
+int internal_phy_suspend(struct phy_device *phydev)
+{
+	int value;
+	int rc;
+
+	/*disable link interrupt*/
+	value = phy_read(phydev, 0x1E);
+	phy_write(phydev, 0x1E, value & ~0x50);
+	/*don't power off if wol is needed*/
+	if (support_internal_phy_wol) {
+		pr_info("don't power down phy\n");
+		return 0;
+	}
+
+	rc = genphy_suspend(phydev);
+
+	return rc;
+}
 static int internal_phy_resume(struct phy_device *phydev)
 {
 	int rc;
@@ -254,7 +281,7 @@ static struct phy_driver amlogic_internal_driver[] = { {
 	.features	= 0x10f,
 	.config_aneg	= genphy_config_aneg,
 	.read_status	= internal_phy_read_status,
-	.suspend	= genphy_suspend,
+	.suspend	= internal_phy_suspend,
 	.resume		= internal_phy_resume,
 } };
 

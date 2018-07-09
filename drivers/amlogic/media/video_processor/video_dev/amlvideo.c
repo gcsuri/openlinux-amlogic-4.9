@@ -509,6 +509,7 @@ static int vidioc_dqbuf(struct file *file, void *priv, struct v4l2_buffer *p)
 	struct vivi_dev *dev = video_drvdata(file);
 	int ret = 0;
 	u64 pts_us64 = 0;
+	struct vframe_s *next_vf;
 
 	if (vfq_level(&dev->q_ready) > AMLVIDEO_POOL_SIZE - 1)
 		return -EAGAIN;
@@ -524,9 +525,6 @@ static int vidioc_dqbuf(struct file *file, void *priv, struct v4l2_buffer *p)
 	}
 	dev->vf->omx_index = dev->frame_num;
 
-	vfq_push(&dev->q_ready, dev->vf);
-	p->index = 0;
-
 	if (dev->vf->pts_us64) {
 		dev->first_frame = 1;
 		pts_us64 = dev->vf->pts_us64;
@@ -536,7 +534,18 @@ static int vidioc_dqbuf(struct file *file, void *priv, struct v4l2_buffer *p)
 	} else {
 		pts_us64 = dev->last_pts_us64
 			+ (DUR2PTS(dev->vf->duration))*100/9;
+		dev->vf->pts = pts_us64*9/100;
+		/*AMLVIDEO_WARN("pts= %d, dev->vf->duration= %d\n",*/
+			/*dev->vf->pts, (DUR2PTS(dev->vf->duration)));*/
 	}
+	next_vf = vf_peek(dev->vf_receiver_name);
+	dev->vf->next_vf_pts_valid = next_vf != NULL;
+	if (dev->vf->next_vf_pts_valid)
+		dev->vf->next_vf_pts = next_vf->pts;
+
+	vfq_push(&dev->q_ready, dev->vf);
+	p->index = 0;
+
 	p->timestamp.tv_sec = pts_us64 >> 32;
 	p->timestamp.tv_usec = pts_us64 & 0xFFFFFFFF;
 	dev->last_pts_us64 = pts_us64;

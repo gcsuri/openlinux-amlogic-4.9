@@ -32,7 +32,7 @@
 #define LCDUKEY(fmt, args...)     pr_info("lcd ukey: "fmt"", ## args)
 #define LCDUKEYERR(fmt, args...)  pr_info("lcd ukey err: error: "fmt"", ## args)
 
-#ifdef CONFIG_KEY_MANAGE
+#ifdef CONFIG_AMLOGIC_UNIFYKEY
 static unsigned int cal_crc32(unsigned int crc, const unsigned char *buf,
 		int buf_len) {
 	unsigned int s_crc32[16] = {
@@ -90,9 +90,14 @@ int lcd_unifykey_check(char *key_name)
 	unsigned int key_crc32;
 	int ret;
 
+	if (key_name == NULL) {
+		LCDUKEYERR("%s: key_name is null\n", __func__);
+		return -1;
+	}
+
 	key_exist = 0;
 	key_len = 0;
-	ret = key_unify_query(key_name, &key_exist, &keypermit);
+	ret = key_unify_query(get_ukdev(), key_name, &key_exist, &keypermit);
 	if (ret < 0) {
 		if (lcd_debug_print_flag)
 			LCDUKEYERR("%s query exist error\n", key_name);
@@ -104,7 +109,7 @@ int lcd_unifykey_check(char *key_name)
 		return -1;
 	}
 
-	ret = key_unify_size(key_name, &key_len);
+	ret = key_unify_size(get_ukdev(), key_name, &key_len);
 	if (ret < 0) {
 		LCDUKEYERR("%s query size error\n", key_name);
 		return -1;
@@ -117,22 +122,23 @@ int lcd_unifykey_check(char *key_name)
 	if (lcd_debug_print_flag)
 		LCDUKEY("%s size: %d\n", key_name, key_len);
 
-lcd_unifykey_read:
 	buf = kzalloc((sizeof(unsigned char) * key_len), GFP_KERNEL);
 	if (!buf) {
 		LCDUKEYERR("%s: Not enough memory\n", __func__);
 		return -1;
 	}
-	ret = key_unify_read(key_name, buf, key_len, &key_len);
+
+lcd_unifykey_check_read:
+	ret = key_unify_read(get_ukdev(), key_name, buf, key_len, &key_len);
 	if (ret < 0) {
 		LCDUKEYERR("%s unify read error\n", key_name);
-		return -1;
+		goto lcd_unifykey_check_err;
 	}
 
 	/* check header */
 	if (key_len <= LCD_UKEY_HEAD_SIZE) {
 		LCDUKEYERR("%s unify key_len %d error\n", key_name, key_len);
-		return -1;
+		goto lcd_unifykey_check_err;
 	}
 	lcd_unifykey_header_check(buf, &key_header);
 	if (key_len != key_header.data_len) {  /* length check */
@@ -142,11 +148,11 @@ lcd_unifykey_read:
 		}
 		if (retry_cnt < LCD_UKEY_RETRY_CNT_MAX) {
 			retry_cnt++;
-			goto lcd_unifykey_read;
-		} else {
-			LCDUKEYERR("%s: load unifykey failed\n", key_name);
-			return -1;
+			memset(buf, 0, key_len);
+			goto lcd_unifykey_check_read;
 		}
+		LCDUKEYERR("%s: load unifykey failed\n", key_name);
+		goto lcd_unifykey_check_err;
 	}
 	key_crc32 = cal_crc32(0, &buf[4], (key_len - 4)); /* except crc32 */
 	if (lcd_debug_print_flag) {
@@ -158,14 +164,19 @@ lcd_unifykey_read:
 			key_header.crc32, key_crc32);
 		if (retry_cnt < LCD_UKEY_RETRY_CNT_MAX) {
 			retry_cnt++;
-			goto lcd_unifykey_read;
-		} else {
-			LCDUKEYERR("%s: load unifykey failed\n", key_name);
-			return -1;
+			memset(buf, 0, key_len);
+			goto lcd_unifykey_check_read;
 		}
+		LCDUKEYERR("%s: load unifykey failed\n", key_name);
+		goto lcd_unifykey_check_err;
 	}
 
+	kfree(buf);
 	return 0;
+
+lcd_unifykey_check_err:
+	kfree(buf);
+	return -1;
 }
 
 int lcd_unifykey_get(char *key_name, unsigned char *buf, int *len)
@@ -177,7 +188,7 @@ int lcd_unifykey_get(char *key_name, unsigned char *buf, int *len)
 	ret = lcd_unifykey_check(key_name);
 	if (ret < 0)
 		return -1;
-	ret = key_unify_size(key_name, &key_len);
+	ret = key_unify_size(get_ukdev(), key_name, &key_len);
 	if (key_len > *len) {
 		LCDUKEYERR("%s size(%d) is bigger than buf_size(%d)\n",
 			key_name, key_len, *len);
@@ -185,7 +196,7 @@ int lcd_unifykey_get(char *key_name, unsigned char *buf, int *len)
 	}
 	*len = key_len;
 
-	ret = key_unify_read(key_name, buf, key_len, &key_len);
+	ret = key_unify_read(get_ukdev(), key_name, buf, key_len, &key_len);
 	if (ret < 0) {
 		LCDUKEYERR("%s unify read error\n", key_name);
 		return -1;

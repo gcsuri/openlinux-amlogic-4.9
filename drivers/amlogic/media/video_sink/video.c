@@ -41,6 +41,7 @@
 #include <linux/slab.h>
 #include <linux/poll.h>
 #include <linux/clk.h>
+#include <linux/debugfs.h>
 #include <linux/amlogic/media/canvas/canvas.h>
 #include <linux/amlogic/media/canvas/canvas_mgr.h>
 #include <linux/dma-mapping.h>
@@ -121,16 +122,19 @@ static int output_fps;
 static u32 omx_pts;
 static u32 omx_pts_set_index;
 static bool omx_run;
-static u32 omx_version = 2;
+static u32 omx_version = 3;
 static int omx_pts_interval_upper = 11000;
 static int omx_pts_interval_lower = -5500;
 static int omx_pts_set_from_hwc_count;
+static bool omx_check_previous_session;
+static u32 omx_cur_session = 0xffffffff;
 static int drop_frame_count;
 #define OMX_MAX_COUNT_RESET_SYSTEMTIME 2
 static int receive_frame_count;
 static int display_frame_count;
 static int omx_need_drop_frame_num;
 static bool omx_drop_done;
+static bool video_start_post;
 
 /*----omx_info  bit0: keep_last_frame, bit1~31: unused----*/
 static u32 omx_info = 0x1;
@@ -343,6 +347,7 @@ static u32 hdmiin_frame_check_cnt;
 		CLEAR_VCBUS_REG_MASK(VPP_MISC + cur_dev->vpp_off, \
 		VPP_VD1_PREBLEND | VPP_VD2_PREBLEND|\
 		VPP_VD2_POSTBLEND | VPP_VD1_POSTBLEND); \
+		WRITE_VCBUS_REG(AFBC_ENABLE, 0);\
 		VIDEO_LAYER_OFF(); \
 		VD1_MEM_POWER_OFF(); \
 		video_prot.video_started = 0; \
@@ -357,6 +362,7 @@ static u32 hdmiin_frame_check_cnt;
 		CLEAR_VCBUS_REG_MASK(VPP_MISC + cur_dev->vpp_off, \
 		VPP_VD1_PREBLEND | VPP_VD2_PREBLEND|\
 		VPP_VD2_POSTBLEND | VPP_VD1_POSTBLEND); \
+		WRITE_VCBUS_REG(AFBC_ENABLE, 0);\
 		if (debug_flag & DEBUG_FLAG_BLACKOUT) {  \
 			pr_info("DisableVideoLayer_NoDelay()\n"); \
 		} \
@@ -370,6 +376,7 @@ static u32 hdmiin_frame_check_cnt;
 		CLEAR_VCBUS_REG_MASK(VPP_MISC + cur_dev->vpp_off, \
 		VPP_VD2_PREBLEND | VPP_PREBLEND_EN | \
 		(0x1ff << VPP_VD2_ALPHA_BIT)); \
+		WRITE_VCBUS_REG(VD2_AFBC_ENABLE, 0); \
 		VD2_MEM_POWER_OFF(); \
 	} while (0)
 #else
@@ -385,6 +392,7 @@ static u32 hdmiin_frame_check_cnt;
 #define DisableVideoLayer_PREBELEND() \
 	do { CLEAR_VCBUS_REG_MASK(VPP_MISC + cur_dev->vpp_off, \
 		VPP_VD1_PREBLEND | VPP_VD2_PREBLEND); \
+		WRITE_VCBUS_REG(AFBC_ENABLE, 0);\
 		if (debug_flag & DEBUG_FLAG_BLACKOUT) {  \
 			pr_info("DisableVideoLayer_PREBELEND()\n"); \
 		} \
@@ -495,6 +503,8 @@ const char video_dev_id2[] = "amvideo-dev2";
 
 int onwaitendframe;
 
+static u32 vpp_hold_line = 8;
+
 struct video_dev_s video_dev[2] = {
 	{0x1d00 - 0x1d00, 0x1a50 - 0x1a50},
 	{0x1900 - 0x1d00, 0x1e00 - 0x1a50}
@@ -520,7 +530,51 @@ struct video_pm_state_s {
 
 #endif
 
+#define PTS_LOGGING
+#define PTS_THROTTLE
+/* #define PTS_TRACE_DEBUG */
+/* #define PTS_TRACE_START */
+
+#ifdef PTS_TRACE_DEBUG
+static int pts_trace_his[16];
+static u32 pts_his[16];
+static u32 scr_his[16];
+static int pts_trace_his_rd;
+#endif
+
+#if defined(PTS_LOGGING) || defined(PTS_TRACE_DEBUG)
+static int pts_trace;
+#endif
+
+#if defined(PTS_LOGGING)
+#define PTS_32_PATTERN_DETECT_RANGE 10
+#define PTS_22_PATTERN_DETECT_RANGE 10
+#define PTS_41_PATTERN_DETECT_RANGE 2
+
+enum video_refresh_pattern {
+	PTS_32_PATTERN = 0,
+	PTS_22_PATTERN,
+	PTS_41_PATTERN,
+	PTS_MAX_NUM_PATTERNS
+};
+
+int n_patterns = PTS_MAX_NUM_PATTERNS;
+
+static int pts_pattern[3] = {0, 0, 0};
+static int pts_pattern_enter_cnt[3] = {0, 0, 0};
+static int pts_pattern_exit_cnt[3] = {0, 0, 0};
+static int pts_log_enable[3] = {0, 0, 0};
+static int pre_pts_trace;
+
+#define PTS_41_PATTERN_SINK_MAX 4
+static int pts_41_pattern_sink[PTS_41_PATTERN_SINK_MAX];
+static int pts_41_pattern_sink_index;
+static int pts_pattern_detected = -1;
+static bool pts_enforce_pulldown = true;
+#endif
+
 static DEFINE_MUTEX(video_module_mutex);
+static DEFINE_MUTEX(video_inuse_mutex);
 static DEFINE_SPINLOCK(lock);
 static u32 frame_par_ready_to_set, frame_par_force_to_set;
 static u32 vpts_remainder;
@@ -572,6 +626,165 @@ int video_property_notify(int flag)
 {
 	video_property_changed = flag;
 	return 0;
+}
+
+#if defined(PTS_LOGGING)
+static ssize_t pts_pattern_enter_cnt_read_file(struct file *file,
+			char __user *userbuf, size_t count, loff_t *ppos)
+{
+	char buf[20];
+	ssize_t len;
+
+	len = snprintf(buf, 20, "%d,%d,%d\n", pts_pattern_enter_cnt[0],
+			pts_pattern_enter_cnt[1], pts_pattern_enter_cnt[2]);
+	return simple_read_from_buffer(userbuf, count, ppos, buf, len);
+}
+
+static ssize_t pts_pattern_exit_cnt_read_file(struct file *file,
+			char __user *userbuf, size_t count, loff_t *ppos)
+{
+	char buf[20];
+	ssize_t len;
+
+	len = snprintf(buf, 20, "%d,%d,%d\n", pts_pattern_exit_cnt[0],
+			pts_pattern_exit_cnt[1], pts_pattern_exit_cnt[2]);
+	return simple_read_from_buffer(userbuf, count, ppos, buf, len);
+}
+
+static ssize_t pts_log_enable_read_file(struct file *file,
+			char __user *userbuf, size_t count, loff_t *ppos)
+{
+	char buf[20];
+	ssize_t len;
+
+	len = snprintf(buf, 20, "%d,%d,%d\n", pts_log_enable[0],
+			pts_log_enable[1], pts_log_enable[2]);
+	return simple_read_from_buffer(userbuf, count, ppos, buf, len);
+}
+
+static ssize_t pts_log_enable_write_file(struct file *file,
+			const char __user *userbuf, size_t count, loff_t *ppos)
+{
+	char buf[20];
+	int ret;
+
+	count = min_t(size_t, count, (sizeof(buf)-1));
+	if (copy_from_user(buf, userbuf, count))
+		return -EFAULT;
+	buf[count] = 0;
+	/* pts_pattern_log_enable (3:2) (2:2) (4:1) */
+	ret = sscanf(buf, "%d,%d,%d", &pts_log_enable[0], &pts_log_enable[1],
+			&pts_log_enable[2]);
+	if (ret != 3) {
+		pr_info("use echo 0/1,0/1,0/1 > /sys/kernel/debug/pts_log_enable\n");
+	} else {
+		pr_info("pts_log_enable: %d,%d,%d\n", pts_log_enable[0],
+			pts_log_enable[1], pts_log_enable[2]);
+	}
+	return count;
+}
+static ssize_t pts_enforce_pulldown_read_file(struct file *file,
+			char __user *userbuf, size_t count, loff_t *ppos)
+{
+	char buf[16];
+	ssize_t len;
+
+	len = snprintf(buf, 16, "%d\n", pts_enforce_pulldown);
+	return simple_read_from_buffer(userbuf, count, ppos, buf, len);
+}
+
+static ssize_t pts_enforce_pulldown_write_file(struct file *file,
+			const char __user *userbuf, size_t count, loff_t *ppos)
+{
+	unsigned int write_val;
+	char buf[16];
+	int ret;
+
+	count = min_t(size_t, count, (sizeof(buf)-1));
+	if (copy_from_user(buf, userbuf, count))
+		return -EFAULT;
+	buf[count] = 0;
+	ret = kstrtoint(buf, 0, &write_val);
+	if (ret != 0)
+		return -EINVAL;
+	pr_info("pts_enforce_pulldown: %d->%d\n",
+		pts_enforce_pulldown, write_val);
+	pts_enforce_pulldown = write_val;
+	return count;
+}
+
+static const struct file_operations pts_pattern_enter_cnt_file_ops = {
+	.open		= simple_open,
+	.read		= pts_pattern_enter_cnt_read_file,
+};
+
+static const struct file_operations pts_pattern_exit_cnt_file_ops = {
+	.open		= simple_open,
+	.read		= pts_pattern_exit_cnt_read_file,
+};
+
+static const struct file_operations pts_log_enable_file_ops = {
+	.open		= simple_open,
+	.read		= pts_log_enable_read_file,
+	.write		= pts_log_enable_write_file,
+};
+
+static const struct file_operations pts_enforce_pulldown_file_ops = {
+	.open		= simple_open,
+	.read		= pts_enforce_pulldown_read_file,
+	.write		= pts_enforce_pulldown_write_file,
+};
+#endif
+
+struct video_debugfs_files_s {
+	const char *name;
+	const umode_t mode;
+	const struct file_operations *fops;
+};
+
+static struct video_debugfs_files_s video_debugfs_files[] = {
+#if defined(PTS_LOGGING)
+	{"pts_pattern_enter_cnt", S_IFREG | 0444,
+		&pts_pattern_enter_cnt_file_ops
+	},
+	{"pts_pattern_exit_cnt", S_IFREG | 0444,
+		&pts_pattern_exit_cnt_file_ops
+	},
+	{"pts_log_enable", S_IFREG | 0644,
+		&pts_log_enable_file_ops
+	},
+	{"pts_enforce_pulldown", S_IFREG | 0644,
+		&pts_enforce_pulldown_file_ops
+	},
+#endif
+};
+
+static struct dentry *video_debugfs_root;
+static void video_debugfs_init(void)
+{
+	struct dentry *ent;
+	int i;
+
+	if (video_debugfs_root)
+		return;
+	video_debugfs_root = debugfs_create_dir("video", NULL);
+	if (!video_debugfs_root)
+		pr_err("can't create video debugfs dir\n");
+
+	for (i = 0; i < ARRAY_SIZE(video_debugfs_files); i++) {
+		ent = debugfs_create_file(video_debugfs_files[i].name,
+			video_debugfs_files[i].mode,
+			video_debugfs_root, NULL,
+			video_debugfs_files[i].fops);
+		if (!ent)
+			pr_info("debugfs create file %s failed\n",
+				video_debugfs_files[i].name);
+	}
+}
+
+static void video_debugfs_exit(void)
+{
+	debugfs_remove(video_debugfs_root);
 }
 
 #ifdef CONFIG_AMLOGIC_POST_PROCESS_MANAGER_PPSCALER
@@ -770,6 +983,10 @@ static u32 vsync_pts_100;
 static u32 vsync_freerun;
 static u32 vsync_slow_factor = 1;
 
+/* pts alignment */
+static bool vsync_pts_aligned;
+static s32 vsync_pts_align;
+
 /* frame rate calculate */
 static u32 last_frame_count;
 static u32 frame_count;
@@ -821,11 +1038,20 @@ static u32 dmc_config_state;
 static u32 last_toggle_count;
 static u32 toggle_same_count;
 
+/* video_inuse */
+static u32 video_inuse;
+
 void set_freerun_mode(int mode)
 {
 	freerun_mode = mode;
 }
 EXPORT_SYMBOL(set_freerun_mode);
+
+void set_pts_realign(void)
+{
+	vsync_pts_aligned = false;
+}
+EXPORT_SYMBOL(set_pts_realign);
 
 static const enum f2v_vphase_type_e vpp_phase_table[4][3] = {
 	{F2V_P2IT, F2V_P2IB, F2V_P2P},	/* VIDTYPE_PROGRESSIVE */
@@ -2037,6 +2263,115 @@ static void vframe_canvas_set(struct canvas_config_s *config, u32 planes,
 		canvas_config_config(*canvas_index, cfg);
 }
 
+#ifdef PTS_LOGGING
+static void log_vsync_video_pattern(int pattern)
+{
+	int factor1 = 0, factor2 = 0, pattern_range = 0;
+
+	if (pattern >= PTS_MAX_NUM_PATTERNS)
+		return;
+
+	if (pattern == PTS_32_PATTERN) {
+		factor1 = 3;
+		factor2 = 2;
+		pattern_range =  PTS_32_PATTERN_DETECT_RANGE;
+	} else if (pattern == PTS_22_PATTERN) {
+		factor1 = 2;
+		factor2 = 2;
+		pattern_range =  PTS_22_PATTERN_DETECT_RANGE;
+	} else if (pattern == PTS_41_PATTERN) {
+		/* update 2111 mode detection */
+		if (pts_trace == 2) {
+			if ((pts_41_pattern_sink[1] == 1) &&
+				(pts_41_pattern_sink[2] == 1) &&
+				(pts_41_pattern_sink[3] == 1) &&
+				(pts_pattern[PTS_41_PATTERN] <
+				PTS_41_PATTERN_DETECT_RANGE)) {
+				pts_pattern[PTS_41_PATTERN]++;
+				if (pts_pattern[PTS_41_PATTERN] ==
+					PTS_41_PATTERN_DETECT_RANGE) {
+					pts_pattern_enter_cnt[PTS_41_PATTERN]++;
+					pts_pattern_detected = pattern;
+					if (pts_log_enable[PTS_41_PATTERN])
+						pr_info("video 4:1 mode detected\n");
+				}
+			}
+			pts_41_pattern_sink[0] = 2;
+			pts_41_pattern_sink_index = 1;
+		} else if (pts_trace == 1) {
+			if ((pts_41_pattern_sink_index <
+				PTS_41_PATTERN_SINK_MAX) &&
+				(pts_41_pattern_sink_index > 0)) {
+				pts_41_pattern_sink[pts_41_pattern_sink_index]
+					= 1;
+				pts_41_pattern_sink_index++;
+			} else if (pts_pattern[PTS_41_PATTERN] ==
+				PTS_41_PATTERN_DETECT_RANGE) {
+				pts_pattern[PTS_41_PATTERN] = 0;
+				pts_41_pattern_sink_index = 0;
+				pts_pattern_exit_cnt[PTS_41_PATTERN]++;
+				memset(&pts_41_pattern_sink[0], 0,
+					PTS_41_PATTERN_SINK_MAX);
+				if (pts_log_enable[PTS_41_PATTERN])
+					pr_info("video 4:1 mode broken\n");
+			} else {
+				pts_pattern[PTS_41_PATTERN] = 0;
+				pts_41_pattern_sink_index = 0;
+				memset(&pts_41_pattern_sink[0], 0,
+					PTS_41_PATTERN_SINK_MAX);
+			}
+		} else if (pts_pattern[PTS_41_PATTERN] ==
+			PTS_41_PATTERN_DETECT_RANGE) {
+			pts_pattern[PTS_41_PATTERN] = 0;
+			pts_41_pattern_sink_index = 0;
+			memset(&pts_41_pattern_sink[0], 0,
+				PTS_41_PATTERN_SINK_MAX);
+			pts_pattern_exit_cnt[PTS_41_PATTERN]++;
+			if (pts_log_enable[PTS_41_PATTERN])
+				pr_info("video 4:1 mode broken\n");
+		} else {
+			pts_pattern[PTS_41_PATTERN] = 0;
+			pts_41_pattern_sink_index = 0;
+			memset(&pts_41_pattern_sink[0], 0,
+				PTS_41_PATTERN_SINK_MAX);
+		}
+		return;
+	}
+
+
+	/* update 3:2 or 2:2 mode detection */
+	if (((pre_pts_trace == factor1) && (pts_trace == factor2)) ||
+		((pre_pts_trace == factor2) && (pts_trace == factor1))) {
+		if (pts_pattern[pattern] < pattern_range) {
+			pts_pattern[pattern]++;
+			if (pts_pattern[pattern] == pattern_range) {
+				pts_pattern_enter_cnt[pattern]++;
+				pts_pattern_detected = pattern;
+				if (pts_log_enable[pattern])
+					pr_info("video %d:%d mode detected\n",
+						factor1, factor2);
+			}
+		}
+	} else if (pts_pattern[pattern] == pattern_range) {
+		pts_pattern[pattern] = 0;
+		pts_pattern_exit_cnt[pattern]++;
+		if (pts_log_enable[pattern])
+			pr_info("video %d:%d mode broken\n", factor1, factor2);
+	} else
+		pts_pattern[pattern] = 0;
+}
+
+static void vsync_video_pattern(void)
+{
+	/* Check for 3:2*/
+	log_vsync_video_pattern(PTS_32_PATTERN);
+	/* Check for 2:2*/
+	log_vsync_video_pattern(PTS_22_PATTERN);
+	/* Check for 4:1*/
+	log_vsync_video_pattern(PTS_41_PATTERN);
+}
+#endif
+
 /* for sdr/hdr/single dv switch with dual dv */
 static u32 last_el_status;
 /* for dual dv switch with different el size */
@@ -2068,13 +2403,40 @@ static void vsync_toggle_frame(struct vframe_s *vf)
 	u32 first_picture = 0;
 	unsigned long flags = 0;
 	bool vf_with_el = false;
+	bool force_toggle = false;
 
 	if (vf == NULL)
 		return;
 	frame_count++;
 	toggle_count++;
+
 	if (is_dolby_vision_enable())
 		vf_with_el = has_enhanced_layer(vf);
+
+#ifdef PTS_TRACE_DEBUG
+#ifdef PTS_TRACE_START
+		if (pts_trace_his_rd < 16) {
+#endif
+			pts_trace_his[pts_trace_his_rd] = pts_trace;
+			pts_his[pts_trace_his_rd] = vf->pts;
+			scr_his[pts_trace_his_rd] = timestamp_pcrscr_get();
+			pts_trace_his_rd++;
+			if (pts_trace_his_rd >= 16)
+				pts_trace_his_rd = 0;
+#ifdef PTS_TRACE_START
+		}
+#endif
+#endif
+
+#ifdef PTS_LOGGING
+	vsync_video_pattern();
+	pre_pts_trace = pts_trace;
+#endif
+
+#if defined(PTS_LOGGING) || defined(PTS_TRACE_DEBUG)
+	pts_trace = 0;
+#endif
+
 	ori_start_x_lines = 0;
 	ori_end_x_lines = ((vf->type & VIDTYPE_COMPRESS) ?
 		vf->compWidth : vf->width) - 1;
@@ -2162,6 +2524,21 @@ static void vsync_toggle_frame(struct vframe_s *vf)
 #else
 			video_vf_put(cur_dispbuf);
 #endif
+			if (debug_flag & DEBUG_FLAG_LATENCY) {
+				vf->ready_clock[3] = sched_clock();
+				pr_info("video toggle latency %lld ms video get latency %lld ms vdin put latency %lld ms. first %lld ms.\n",
+					vf->ready_clock[3]/1000,
+					vf->ready_clock[2]/1000,
+					vf->ready_clock[1]/1000,
+					vf->ready_clock[0]/1000);
+				cur_dispbuf->ready_clock[4] = sched_clock();
+				pr_info("video put latency %lld ms video toggle latency %lld ms video get latency %lld ms vdin put latency %lld ms. first %lld ms.\n",
+					cur_dispbuf->ready_clock[4]/1000,
+					cur_dispbuf->ready_clock[3]/1000,
+					cur_dispbuf->ready_clock[2]/1000,
+					cur_dispbuf->ready_clock[1]/1000,
+					cur_dispbuf->ready_clock[0]/1000);
+			}
 		}
 
 	} else
@@ -2375,20 +2752,31 @@ static void vsync_toggle_frame(struct vframe_s *vf)
 		vf->type_backup = vf->type;
 	}
 
+	if (cur_dispbuf && vf &&
+		(cur_dispbuf->ratio_control &
+		DISP_RATIO_ADAPTED_PICMODE) &&
+		(cur_dispbuf->ratio_control ==
+		vf->ratio_control) &&
+		memcmp(&cur_dispbuf->pic_mode, &vf->pic_mode,
+		sizeof(struct vframe_pic_mode_s)))
+		force_toggle = true;
+
+	if ((last_process_3d_type != process_3d_type)
+		|| (last_el_status != vf_with_el))
+		force_toggle = true;
+
 	/* enable new config on the new frames */
-	if ((first_picture) ||  (cur_dispbuf &&
-	    ((cur_dispbuf->bufWidth != vf->bufWidth) ||
-	    (cur_dispbuf->width != vf->width) ||
-	    (cur_dispbuf->height != vf->height) ||
-	    (cur_dispbuf->bitdepth != vf->bitdepth) ||
-	    (cur_dispbuf->trans_fmt != vf->trans_fmt) ||
-	    (last_process_3d_type != process_3d_type) ||
-	    (cur_dispbuf->ratio_control != vf->ratio_control) ||
-	    ((cur_dispbuf->type_backup & VIDTYPE_INTERLACE) !=
-	     (vf->type_backup & VIDTYPE_INTERLACE)) ||
-	     (last_el_status != vf_with_el) ||
-	    (cur_dispbuf->type != vf->type)
-	    ))) {
+	if (first_picture || force_toggle ||
+		(cur_dispbuf &&
+		((cur_dispbuf->bufWidth != vf->bufWidth) ||
+		(cur_dispbuf->width != vf->width) ||
+		(cur_dispbuf->height != vf->height) ||
+		(cur_dispbuf->bitdepth != vf->bitdepth) ||
+		(cur_dispbuf->trans_fmt != vf->trans_fmt) ||
+		(cur_dispbuf->ratio_control != vf->ratio_control) ||
+		((cur_dispbuf->type_backup & VIDTYPE_INTERLACE) !=
+		(vf->type_backup & VIDTYPE_INTERLACE)) ||
+		(cur_dispbuf->type != vf->type)))) {
 		last_process_3d_type = process_3d_type;
 		atomic_inc(&video_sizechange);
 		wake_up_interruptible(&amvideo_sizechange_wait);
@@ -2491,6 +2879,24 @@ static void vsync_toggle_frame(struct vframe_s *vf)
 	}
 	if (cur_dispbuf != &vf_local)
 		video_keeper_new_frame_notify();
+
+	if ((vf != &vf_local) && (vf) && !vsync_pts_aligned) {
+#ifdef PTS_TRACE_DEBUG
+		pr_info("####timestamp_pcrscr_get() = 0x%x, vf->pts = 0x%x, vsync_pts_inc = %d\n",
+			timestamp_pcrscr_get(), vf->pts, vsync_pts_inc);
+#endif
+		if ((abs(timestamp_pcrscr_get() - vf->pts) <= (vsync_pts_inc))
+			  && ((int)(timestamp_pcrscr_get() - vf->pts) >= 0)) {
+			vsync_pts_align =  vsync_pts_inc / 4 -
+				(timestamp_pcrscr_get() - vf->pts);
+			vsync_pts_aligned = true;
+#ifdef PTS_TRACE_DEBUG
+			pts_trace_his_rd = 0;
+			pr_info("####vsync_pts_align set to %d\n",
+				vsync_pts_align);
+#endif
+		}
+	}
 }
 static inline void vd1_path_select(bool afbc)
 {
@@ -2582,9 +2988,14 @@ static void viu_set_dcu(struct vpp_frame_par_s *frame_par, struct vframe_s *vf)
 	static const u32 vpat[MAX_VSKIP_COUNT + 1] = {
 		0, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf};
 	u32 u, v;
-	u32 type = vf->type, bit_mode = 0;
+	u32 type, bit_mode = 0;
 	bool vf_with_el = false;
 
+	if (vf == NULL) {
+		pr_info("viu_set_dcu vf NULL, return\n");
+		return;
+	}
+	type = vf->type;
 	pr_debug("set dcu for vd1 %p, type:0x%x\n", vf, type);
 	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_GXBB) {
 		if (frame_par->nocomp)
@@ -2592,7 +3003,7 @@ static void viu_set_dcu(struct vpp_frame_par_s *frame_par, struct vframe_s *vf)
 
 		if (type & VIDTYPE_COMPRESS) {
 			r = (3 << 24) |
-			    (17 << 16) |
+			    (vpp_hold_line << 16) |
 			    ((legacy_vpp ? 1 : 2) << 14) | /* burst1 */
 			    (vf->bitdepth & BITDEPTH_MASK);
 
@@ -2725,7 +3136,7 @@ static void viu_set_dcu(struct vpp_frame_par_s *frame_par, struct vframe_s *vf)
 	}
 
 	r = (3 << VDIF_URGENT_BIT) |
-	    (17 << VDIF_HOLD_LINES_BIT) |
+	    (vpp_hold_line << VDIF_HOLD_LINES_BIT) |
 	    VDIF_FORMAT_SPLIT |
 	    VDIF_CHRO_RPT_LAST | VDIF_ENABLE;
 	/*  | VDIF_RESET_ON_GO_FIELD;*/
@@ -2747,6 +3158,8 @@ static void viu_set_dcu(struct vpp_frame_par_s *frame_par, struct vframe_s *vf)
 	if (frame_par->hscale_skip_count)
 		r |= VDIF_CHROMA_HZ_AVG | VDIF_LUMA_HZ_AVG;
 
+	/*enable go field reset default according to vlsi*/
+	r |= VDIF_RESET_ON_GO_FIELD;
 	VSYNC_WR_MPEG_REG(VD1_IF0_GEN_REG + cur_dev->viu_off, r);
 	if (!vf_with_el)
 		VSYNC_WR_MPEG_REG(
@@ -2953,7 +3366,8 @@ static void viu_set_dcu(struct vpp_frame_par_s *frame_par, struct vframe_s *vf)
 	}
 #ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 	if ((is_meson_txlx_cpu()
-		|| is_meson_g12a())
+		|| is_meson_g12a_cpu()
+		|| is_meson_g12b_cpu())
 		&& is_dolby_vision_on()
 		&& is_dolby_vision_stb_mode()
 		&& (vf->source_type ==
@@ -3145,7 +3559,7 @@ static void vd2_set_dcu(struct vpp_frame_par_s *frame_par, struct vframe_s *vf)
 	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_GXBB) {
 		if (type & VIDTYPE_COMPRESS) {
 			r = (3 << 24) |
-			    (17 << 16) |
+			    (vpp_hold_line << 16) |
 			    ((legacy_vpp ? 1 : 2) << 14) | /* burst1 */
 			    (vf->bitdepth & BITDEPTH_MASK);
 
@@ -3260,8 +3674,8 @@ static void vd2_set_dcu(struct vpp_frame_par_s *frame_par, struct vframe_s *vf)
 					VD2_IF0_GEN_REG3 + cur_dev->viu_off,
 					(bit_mode&0x3), 8, 2);
 			}
-
-			VSYNC_WR_MPEG_REG(VD2_AFBC_ENABLE, 0);
+			if (!(VSYNC_RD_MPEG_REG(VIU_MISC_CTRL1) & 0x1))
+				VSYNC_WR_MPEG_REG(VD2_AFBC_ENABLE, 0);
 			if (type & VIDTYPE_VIU_NV21)
 				VSYNC_WR_MPEG_REG_BITS(
 					VD2_IF0_GEN_REG2 +
@@ -3274,7 +3688,7 @@ static void vd2_set_dcu(struct vpp_frame_par_s *frame_par, struct vframe_s *vf)
 	}
 
 	r = (3 << VDIF_URGENT_BIT) |
-	    (17 << VDIF_HOLD_LINES_BIT) |
+	    (vpp_hold_line << VDIF_HOLD_LINES_BIT) |
 	    VDIF_FORMAT_SPLIT |
 	    VDIF_CHRO_RPT_LAST | VDIF_ENABLE;
 	/*  | VDIF_RESET_ON_GO_FIELD;*/
@@ -3419,7 +3833,8 @@ static void vd2_set_dcu(struct vpp_frame_par_s *frame_par, struct vframe_s *vf)
 	}
 #ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 	if ((is_meson_txlx_cpu()
-		|| is_meson_g12a())
+		|| is_meson_g12a_cpu()
+		|| is_meson_g12b_cpu())
 		&& is_dolby_vision_on()
 		&& is_dolby_vision_stb_mode()
 		&& (vf->source_type ==
@@ -3615,15 +4030,103 @@ static inline bool duration_expire(struct vframe_s *cur_vf,
 
 #define VPTS_RESET_THRO
 
-static inline bool vpts_expire(struct vframe_s *cur_vf,
-			       struct vframe_s *next_vf)
+#ifdef PTS_LOGGING
+static inline void vpts_perform_pulldown(struct vframe_s *next_vf,
+					bool *expired)
 {
-	u32 pts = next_vf->pts;
+	int pattern_range, expected_curr_interval;
+	int expected_prev_interval;
+
+	/* Dont do anything if we have invalid data */
+	if (!next_vf || !next_vf->pts || !next_vf->next_vf_pts_valid)
+		return;
+
+	switch (pts_pattern_detected) {
+	case PTS_32_PATTERN:
+		pattern_range = PTS_32_PATTERN_DETECT_RANGE;
+		switch (pre_pts_trace) {
+		case 3:
+			expected_prev_interval = 3;
+			expected_curr_interval = 2;
+			break;
+		case 2:
+			expected_prev_interval = 2;
+			expected_curr_interval = 3;
+			break;
+		default:
+			return;
+		}
+		break;
+	case PTS_22_PATTERN:
+		if (pre_pts_trace != 2)
+			return;
+		pattern_range =  PTS_22_PATTERN_DETECT_RANGE;
+		expected_prev_interval = 2;
+		expected_curr_interval = 2;
+		break;
+	case PTS_41_PATTERN:
+		/* TODO */
+	default:
+		return;
+	}
+
+	/* We do nothing if  we dont have enough data*/
+	if (pts_pattern[pts_pattern_detected] != pattern_range)
+		return;
+
+	if (*expired) {
+		if (pts_trace < expected_curr_interval) {
+			/* 232323...223 -> 232323...232 */
+			/* check if next frame will toggle after 3 vsyncs */
+			int nextPts = timestamp_pcrscr_get() + vsync_pts_align;
+
+			if (((int)(nextPts + expected_prev_interval *
+				vsync_pts_inc - next_vf->next_vf_pts) < 0) &&
+				((int)(nextPts + expected_curr_interval *
+				vsync_pts_inc - next_vf->next_vf_pts) >= 0)) {
+				*expired = false;
+				if (pts_log_enable[PTS_32_PATTERN])
+					pr_info("hold frame for pattern: %d",
+						pts_pattern_detected);
+			}
+		}
+	} else {
+		if (pts_trace == expected_curr_interval) {
+			/* 232323...332 -> 232323...323 */
+			/* check if this frame will expire next vsyncs and */
+			/* next frame will expire after 2 vsyncs */
+			int nextPts = timestamp_pcrscr_get() + vsync_pts_align;
+
+			if (((int)(nextPts + vsync_pts_inc - next_vf->pts)
+				>= 0) &&
+			    ((int)(nextPts + vsync_pts_inc -
+				next_vf->next_vf_pts) < 0) &&
+			    ((int)(nextPts + expected_curr_interval *
+				vsync_pts_inc - next_vf->next_vf_pts) >= 0)) {
+				*expired = true;
+				if (pts_log_enable[PTS_32_PATTERN])
+					pr_info("pull frame for pattern: %d",
+						pts_pattern_detected);
+			}
+		}
+	}
+}
+#endif
+
+static inline bool vpts_expire(struct vframe_s *cur_vf,
+			       struct vframe_s *next_vf,
+			       int toggled_cnt)
+{
+	u32 pts;
 #ifdef VIDEO_PTS_CHASE
 	u32 vid_pts, scr_pts;
 #endif
 	u32 systime;
 	u32 adjust_pts, org_vpts;
+	bool expired;
+
+	if (next_vf == NULL)
+		return false;
 
 	if (debug_flag & DEBUG_FLAG_TOGGLE_FRAME_PER_VSYNC)
 		return true;
@@ -3632,6 +4135,9 @@ static inline bool vpts_expire(struct vframe_s *cur_vf,
 		return true;
 
 	if ((freerun_mode == FREERUN_NODUR) || hdmi_in_onvideo)
+		return true;
+	/*freerun for game mode*/
+	if (next_vf->flag & VFRAME_FLAG_GAME_MODE)
 		return true;
 
 	if (step_enable) {
@@ -3667,6 +4173,7 @@ static inline bool vpts_expire(struct vframe_s *cur_vf,
 		return true;
 
 	systime = timestamp_pcrscr_get();
+	pts = next_vf->pts;
 
 	if (((pts == 0) && (cur_dispbuf != &vf_local))
 	    || (freerun_mode == FREERUN_DUR)) {
@@ -3857,7 +4364,33 @@ static inline bool vpts_expire(struct vframe_s *cur_vf,
 		}
 	}
 
-	return (int)(timestamp_pcrscr_get() - pts) >= 0;
+	expired = (int)(timestamp_pcrscr_get() + vsync_pts_align - pts) >= 0;
+
+#ifdef PTS_THROTTLE
+	if (expired && next_vf && next_vf->next_vf_pts_valid &&
+		(vsync_slow_factor == 1) &&
+		next_vf->next_vf_pts &&
+		(toggled_cnt > 0) &&
+		((int)(timestamp_pcrscr_get() + vsync_pts_inc +
+		vsync_pts_align - next_vf->next_vf_pts) < 0)) {
+		expired = false;
+	} else if (!expired && next_vf && next_vf->next_vf_pts_valid &&
+		(vsync_slow_factor == 1) &&
+		next_vf->next_vf_pts &&
+		(toggled_cnt == 0) &&
+		((int)(timestamp_pcrscr_get() + vsync_pts_inc +
+		vsync_pts_align - next_vf->next_vf_pts) >= 0)) {
+		expired = true;
+	}
+#endif
+
+#ifdef PTS_LOGGING
+	if (pts_enforce_pulldown) {
+		/* Perform Pulldown if needed*/
+		vpts_perform_pulldown(next_vf, &expired);
+	}
+#endif
+	return expired;
 #endif
 }
 
@@ -4351,9 +4884,7 @@ static irqreturn_t vsync_isr_in(int irq, void *dev_id)
 	bool show_nosync = false;
 	u32 vpp_misc_save, vpp_misc_set;
 	int first_set = 0;
-#ifdef CONFIG_AM_VIDEO_LOG
 	int toggle_cnt;
-#endif
 	struct vframe_s *toggle_vf = NULL;
 	struct vframe_s *toggle_frame = NULL;
 	int video1_off_req = 0;
@@ -4440,9 +4971,7 @@ static irqreturn_t vsync_isr_in(int irq, void *dev_id)
 			old_vmode = new_vmode;
 		}
 	}
-#ifdef CONFIG_AM_VIDEO_LOG
 	toggle_cnt = 0;
-#endif
 	vsync_count++;
 	timer_count++;
 
@@ -4465,26 +4994,16 @@ static irqreturn_t vsync_isr_in(int irq, void *dev_id)
 
 	if (is_meson_txlx_cpu() && dmc_adjust) {
 		bool force_adjust = false;
+		struct vframe_s *chk_vf;
 
-		if (vf)
+		chk_vf = (vf != NULL) ? vf : cur_dispbuf;
+		if (chk_vf)
 			force_adjust =
-				((vf->type & (VIDTYPE_VIU_444
-				| VIDTYPE_PIC))
-				== (VIDTYPE_VIU_444
-				| VIDTYPE_PIC)) ? true : false;
-		else if (cur_dispbuf)
-			force_adjust =
-				((cur_dispbuf->type & (VIDTYPE_VIU_444
-				| VIDTYPE_PIC))
-				== (VIDTYPE_VIU_444
-				| VIDTYPE_PIC)) ? true : false;
-		if (vf)
+				(chk_vf->type & VIDTYPE_VIU_444) ? true : false;
+		if (chk_vf)
 			dmc_adjust_for_mali_vpu(
-				vf->width, vf->height, force_adjust);
-		else if (cur_dispbuf)
-			dmc_adjust_for_mali_vpu(
-				cur_dispbuf->width,
-				cur_dispbuf->height,
+				chk_vf->width,
+				chk_vf->height,
 				force_adjust);
 		else
 			dmc_adjust_for_mali_vpu(
@@ -4644,10 +5163,12 @@ static irqreturn_t vsync_isr_in(int irq, void *dev_id)
 		vf = video_vf_peek();
 
 		if (vf) {
-			if (hdmi_in_onvideo == 0)
+			if (hdmi_in_onvideo == 0) {
 				tsync_avevent_locked(VIDEO_START,
 						     (vf->pts) ? vf->pts :
 						     timestamp_vpts_get());
+				video_start_post = true;
+			}
 
 			if (show_first_frame_nosync || show_first_picture)
 				show_nosync = true;
@@ -4715,7 +5236,7 @@ static irqreturn_t vsync_isr_in(int irq, void *dev_id)
 	}
 
 	while (vf) {
-		if (vpts_expire(cur_dispbuf, vf) || show_nosync) {
+		if (vpts_expire(cur_dispbuf, vf, toggle_cnt) || show_nosync) {
 			amlog_mask(LOG_MASK_TIMESTAMP,
 			"vpts = 0x%x, c.dur=0x%x, n.pts=0x%x, scr = 0x%x\n",
 				   timestamp_vpts_get(),
@@ -4764,6 +5285,13 @@ static irqreturn_t vsync_isr_in(int irq, void *dev_id)
 			vf = video_vf_get();
 			if (!vf)
 				break;
+			if (debug_flag & DEBUG_FLAG_LATENCY) {
+				vf->ready_clock[2] = sched_clock();
+				pr_info("video get latency %lld ms vdin put latency %lld ms. first %lld ms.\n",
+				vf->ready_clock[2]/1000,
+				vf->ready_clock[1]/1000,
+				vf->ready_clock[0]/1000);
+			}
 			if (video_vf_dirty_put(vf))
 				break;
 			if (vf && hdmiin_frame_check && (vf->source_type ==
@@ -4927,9 +5455,7 @@ static irqreturn_t vsync_isr_in(int irq, void *dev_id)
 			break;
 		}
 
-#ifdef CONFIG_AM_VIDEO_LOG
 		toggle_cnt++;
-#endif
 	}
 
 #ifdef INTERLACE_FIELD_MATCH_PROCESS
@@ -5077,9 +5603,7 @@ SET_FILTER:
 #endif
 
 		if (platform_type == 1) {
-			if ((cur_frame_par->hscale_skip_count)
-				&& cur_dispbuf &&
-				(cur_dispbuf->type & VIDTYPE_VIU_FIELD)) {
+			if (cur_frame_par->hscale_skip_count) {
 				VSYNC_WR_MPEG_REG_BITS(VIU_VD1_FMT_CTRL +
 					cur_dev->viu_off, 1, 20, 1);
 				/* HFORMATTER_EN */
@@ -5350,6 +5874,8 @@ SET_FILTER:
 		/* for bypass pps debug */
 		if ((vpp_filter->vpp_hsc_start_phase_step == 0x1000000) &&
 			(vpp_filter->vpp_vsc_start_phase_step == 0x1000000) &&
+			(vpp_filter->vpp_hsc_start_phase_step ==
+			vpp_filter->vpp_hf_start_phase_step) &&
 			!vpp_filter->vpp_pre_vsc_en &&
 			!vpp_filter->vpp_pre_hsc_en &&
 			bypass_pps)
@@ -5372,6 +5898,12 @@ SET_FILTER:
 		vpp_filter->vpp_horz_coeff[0],
 		VPP_SC_HBANK_LENGTH_BIT,
 		VPP_SC_BANK_LENGTH_WID);
+
+		/* fix the pps last line dummy issue */
+		if (cpu_after_eq(MESON_CPU_MAJOR_ID_G12B))
+			VSYNC_WR_MPEG_REG_BITS(
+				VPP_SC_MISC + cur_dev->vpp_off,
+				1, 24, 1);
 
 		/* #if MESON_CPU_TYPE >= MESON_CPU_TYPE_MESON8 */
 		if ((get_cpu_type() >= MESON_CPU_MAJOR_ID_M8)
@@ -5536,6 +6068,9 @@ SET_FILTER:
 	}
 
  exit:
+#if defined(PTS_LOGGING) || defined(PTS_TRACE_DEBUG)
+		pts_trace++;
+#endif
 	vpp_misc_save = READ_VCBUS_REG(VPP_MISC + cur_dev->vpp_off);
 	vpp_misc_set = vpp_misc_save;
 #ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_VECM
@@ -5609,6 +6144,9 @@ SET_FILTER:
 			if (process_3d_type)
 				vpp_misc_set &= ~(VPP_VD2_PREBLEND |
 					VPP_VD2_POSTBLEND | VPP_PREBLEND_EN);
+			/*auto disable sr when video off*/
+			VSYNC_WR_MPEG_REG(VPP_SRSHARP0_CTRL, 0);
+			VSYNC_WR_MPEG_REG(VPP_SRSHARP1_CTRL, 0);
 			video_onoff_state = VIDEO_ENABLE_STATE_IDLE;
 			vpu_delay_work_flag |=
 				VPU_VIDEO_LAYER1_CHANGED;
@@ -5790,10 +6328,10 @@ SET_FILTER:
 				VSYNC_WR_MPEG_REG_BITS(
 					VIU_MISC_CTRL1,
 					1, 16, 1); /* bypass core1 */
-			else if (is_meson_g12a())
+			else if (is_meson_g12a_cpu()
+				|| is_meson_g12b_cpu())
 				VSYNC_WR_MPEG_REG_BITS(
-								DOLBY_PATH_CTRL,
-								1, 0, 1);
+					DOLBY_PATH_CTRL, 1, 0, 1);
 		}
 		if (cur_dispbuf && (cur_dispbuf == &vf_local))
 			cur_dispbuf = NULL;
@@ -5972,7 +6510,7 @@ static void video_vf_unreg_provider(void)
 {
 	ulong flags;
 	struct vframe_s *el_vf = NULL;
-
+	int keeped = 0;
 	new_frame_count = 0;
 	first_frame_toggled = 0;
 
@@ -6014,6 +6552,8 @@ static void video_vf_unreg_provider(void)
 	vsync_pts_112 = 0;
 	vsync_pts_125 = 0;
 	vsync_freerun = 0;
+	vsync_pts_align = 0;
+	vsync_pts_aligned = false;
 	video_prot.video_started = 0;
 	spin_unlock_irqrestore(&lock, flags);
 
@@ -6026,23 +6566,57 @@ static void video_vf_unreg_provider(void)
 	if (cur_dispbuf) {
 		/* TODO: mod gate */
 		/* switch_mod_gate_by_name("ge2d", 1); */
-		vf_keep_current(cur_dispbuf, el_vf);
+		keeped = vf_keep_current(cur_dispbuf, el_vf);
 		/* TODO: mod gate */
 		/* switch_mod_gate_by_name("ge2d", 0); */
 	}
-	if (hdmi_in_onvideo == 0)
+	if ((hdmi_in_onvideo == 0) && (video_start_post)) {
 		tsync_avevent(VIDEO_STOP, 0);
+		video_start_post = false;
+	}
 #else
 	/* if (!trickmode_fffb) */
 	if (cur_dispbuf)
-		vf_keep_current(cur_dispbuf, el_vf);
-	if (hdmi_in_onvideo == 0)
+		keeped = vf_keep_current(cur_dispbuf, el_vf);
+	if ((hdmi_in_onvideo == 0) && (video_start_post)) {
 		tsync_avevent(VIDEO_STOP, 0);
+		video_start_post = false;
+	}
 #endif
+	if (keeped < 0) {/*keep failed.*/
+		pr_info("video keep failed, disable video now!\n");
+		safe_disble_videolayer();
+		try_free_keep_video(1);
+	}
 	atomic_set(&video_unreg_flag, 0);
+	pr_info("VD1 AFBC 0x%x.\n", READ_VCBUS_REG(AFBC_ENABLE));
 	enable_video_discontinue_report = 1;
 	show_first_picture = false;
 	show_first_frame_nosync = false;
+
+#ifdef PTS_LOGGING
+	{
+		int pattern;
+		/* Print what we have right now*/
+		if (pts_pattern_detected >= PTS_32_PATTERN &&
+			pts_pattern_detected < PTS_MAX_NUM_PATTERNS) {
+			pr_info("pattern detected = %d, pts_enter_pattern_cnt =%d, pts_exit_pattern_cnt =%d",
+				pts_pattern_detected,
+				pts_pattern_enter_cnt[pts_pattern_detected],
+				pts_pattern_exit_cnt[pts_pattern_detected]);
+		}
+		/* Reset all metrics now*/
+		for (pattern = 0; pattern < PTS_MAX_NUM_PATTERNS; pattern++) {
+			pts_pattern[pattern] = 0;
+			pts_pattern_exit_cnt[pattern] = 0;
+			pts_pattern_enter_cnt[pattern] = 0;
+		}
+		/* Reset 4:1 data*/
+		memset(&pts_41_pattern_sink[0], 0, PTS_41_PATTERN_SINK_MAX);
+		pts_pattern_detected = -1;
+		pre_pts_trace = 0;
+	}
+#endif
 }
 
 static void video_vf_light_unreg_provider(void)
@@ -6125,6 +6699,7 @@ static int video_receiver_event_fun(int type, void *data, void *private_data)
 		display_frame_count = 0;
 		omx_run = false;
 		omx_pts_set_from_hwc_count = 0;
+		omx_check_previous_session = true;
 		omx_need_drop_frame_num = 0;
 		omx_drop_done = false;
 		omx_pts_set_index = 0;
@@ -6336,14 +6911,33 @@ static void set_omx_pts(u32 *p)
 	u32 set_from_hwc = p[2];
 	u32 frame_num = p[3];
 	u32 not_reset = p[4];
+	u32 session = p[5];
 	unsigned int try_cnt = 0x1000;
 
 	mutex_lock(&omx_mutex);
 	if (omx_pts_set_index < frame_num)
 		omx_pts_set_index = frame_num;
 
+	if (omx_check_previous_session) {
+		if (session != omx_cur_session) {
+			omx_cur_session = session;
+			omx_check_previous_session = false;
+		} else {
+			mutex_unlock(&omx_mutex);
+			pr_info("check session return: tmp_pts %d"
+				"session=0x%x\n", tmp_pts, omx_cur_session);
+			return;
+		}
+	}
+
 	if (not_reset == 0)
 		omx_pts = tmp_pts;
+	/* kodi may render first frame, then drop dozens of frames */
+	if (set_from_hwc == 0 && omx_run == true && frame_num <= 2
+			&& not_reset == 0) {
+		pr_info("reset omx_run to false.\n");
+		omx_run = false;
+	}
 	if (set_from_hwc == 1) {
 		if (!omx_run) {
 			omx_need_drop_frame_num =
@@ -6371,6 +6965,8 @@ static void set_omx_pts(u32 *p)
 			}
 #endif
 			if (vf) {
+				pr_debug("drop frame_num=%d, vf->omx_index=%d\n",
+						frame_num, vf->omx_index);
 				if (frame_num >= vf->omx_index) {
 					vf = vf_get(RECEIVER_NAME);
 					if (vf)
@@ -6645,7 +7241,9 @@ static long amvideo_ioctl(struct file *file, unsigned int cmd, ulong arg)
 
 	case AMSTREAM_IOC_CLEAR_VBUF:{
 			unsigned long flags;
-
+			while (atomic_read(&video_inirq_flag) > 0 ||
+				atomic_read(&video_unreg_flag) > 0)
+				schedule();
 			spin_lock_irqsave(&lock, flags);
 			cur_dispbuf = NULL;
 			spin_unlock_irqrestore(&lock, flags);
@@ -7062,6 +7660,8 @@ static ssize_t video_state_show(struct class *cla,
 		    cur_frame_par->video_input_w);
 	len += sprintf(buf + len, "video_input_h %u.\n",
 		    cur_frame_par->video_input_h);
+	len += sprintf(buf + len, "clk_in_pps %u.\n",
+			    cur_frame_par->clk_in_pps);
 #ifdef TV_3D_FUNCTION_OPEN
 	len += sprintf(buf + len, "vpp_2pic_mode %u.\n",
 		    cur_frame_par->vpp_2pic_mode);
@@ -7230,7 +7830,7 @@ static ssize_t video_screen_mode_show(struct class *cla,
 		"normal-noscaleup",
 		"4-3 ignore", "4-3 letter box", "4-3 pan scan", "4-3 combined",
 		"16-9 ignore", "16-9 letter box", "16-9 pan scan",
-		"16-9 combined"
+		"16-9 combined", "Custom AR", "AFD"
 	};
 
 	if (wide_setting < ARRAY_SIZE(wide_str)) {
@@ -7301,6 +7901,33 @@ static ssize_t video_seek_flag_store(struct class *cla,
 
 	return count;
 }
+
+#ifdef PTS_TRACE_DEBUG
+static ssize_t pts_trace_show(struct class *cla,
+			struct class_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d %d %d %d %d %d %d %d\n"
+				"%d %d %d %d %d %d %d %d\n"
+				"%0x %0x %0x %0x %0x %0x %0x %0x\n"
+				"%0x %0x %0x %0x %0x %0x %0x %0x\n"
+				"%0x %0x %0x %0x %0x %0x %0x %0x\n"
+				"%0x %0x %0x %0x %0x %0x %0x %0x\n",
+		pts_trace_his[0], pts_trace_his[1], pts_trace_his[2],
+		pts_trace_his[3], pts_trace_his[4], pts_trace_his[5],
+		pts_trace_his[6], pts_trace_his[7], pts_trace_his[8],
+		pts_trace_his[9], pts_trace_his[10], pts_trace_his[11],
+		pts_trace_his[12], pts_trace_his[13], pts_trace_his[14],
+		pts_trace_his[15],
+		pts_his[0], pts_his[1], pts_his[2], pts_his[3],
+		pts_his[4], pts_his[5], pts_his[6], pts_his[7],
+		pts_his[8], pts_his[9], pts_his[10], pts_his[11],
+		pts_his[12], pts_his[13], pts_his[14], pts_his[15],
+		scr_his[0], scr_his[1], scr_his[2], scr_his[3],
+		scr_his[4], scr_his[5], scr_his[6], scr_his[7],
+		scr_his[8], scr_his[9], scr_his[10], scr_his[11],
+		scr_his[12], scr_his[13], scr_his[14], scr_his[15]);
+}
+#endif
 
 static ssize_t video_brightness_show(struct class *cla,
 				     struct class_attribute *attr, char *buf)
@@ -7663,9 +8290,9 @@ static u32 rgb2yuv(u32 rgb)
 	int b = rgb & 0xff;
 	int y, u, v;
 
-	y = ((66*r + 129*g + 25*b + 128) >> 8) + 16;
-	u = ((-38*r - 74*g + 112*b + 128) >> 8) + 128;
-	v = ((112*r - 94*g - 18*b + 128) >> 8) + 128;
+	y = ((47*r + 157*g + 16*b + 128) >> 8) + 16;
+	u = ((-26*r - 87*g + 112*b + 128) >> 8) + 128;
+	v = ((112*r - 102*g - 10*b + 128) >> 8) + 128;
 
 	return  (y << 16) | (u << 8) | v;
 }
@@ -7740,6 +8367,7 @@ static ssize_t video_rgb_screen_store(struct class *cla,
 				       const char *buf, size_t count)
 {
 	size_t r;
+	u32 yuv_eight;
 
 	/* unsigned data = 0x0; */
 	r = kstrtoint(buf, 0, &rgb_screen);
@@ -7771,12 +8399,13 @@ static ssize_t video_rgb_screen_store(struct class *cla,
 		data &= (~VPP_VD2_POSTBLEND);
 #endif
 	/* show test screen  YUV blend*/
+	yuv_eight = rgb2yuv(rgb_screen & 0x00ffffff);
 	if (is_meson_gxtvbb_cpu())   {
 		WRITE_VCBUS_REG(VPP_DUMMY_DATA1,
 			rgb_screen & 0x00ffffff);
 	} else if (cpu_after_eq(MESON_CPU_MAJOR_ID_TXL)) {
 		WRITE_VCBUS_REG(VPP_DUMMY_DATA1,
-			rgb2yuv(rgb_screen & 0x00ffffff));
+			eight2ten(yuv_eight & 0x00ffffff));
 	}
 	/* WRITE_VCBUS_REG(VPP_MISC, data); */
 
@@ -7835,6 +8464,27 @@ static ssize_t video_disable_store(struct class *cla,
 
 	if (_video_set_disable(val) < 0)
 		return -EINVAL;
+
+	return count;
+}
+
+static ssize_t video_global_output_show(struct class *cla,
+				struct class_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", video_global_output);
+}
+
+static ssize_t video_global_output_store(struct class *cla,
+				struct class_attribute *attr,
+				const char *buf, size_t count)
+{
+	size_t r;
+
+	r = kstrtoint(buf, 0, &video_global_output);
+	if (r < 0)
+		return -EINVAL;
+
+	pr_info("%s(%d)\n", __func__, video_global_output);
 
 	return count;
 }
@@ -8511,6 +9161,75 @@ static ssize_t free_cma_buffer_store(struct class *cla,
 	return count;
 }
 
+static ssize_t pic_mode_info_show(struct class *cla,
+			struct class_attribute *attr, char *buf)
+{
+	int ret = 0;
+
+	if (cur_dispbuf) {
+		u32 adapted_mode = (cur_dispbuf->ratio_control
+			& DISP_RATIO_ADAPTED_PICMODE) ? 1 : 0;
+		u32 info_frame = (cur_dispbuf->ratio_control
+			& DISP_RATIO_INFOFRAME_AVAIL) ? 1 : 0;
+
+		ret += sprintf(buf + ret, "ratio_control=0x%x\n",
+			cur_dispbuf->ratio_control);
+		ret += sprintf(buf + ret, "adapted_mode=%d\n",
+			adapted_mode);
+		ret += sprintf(buf + ret, "info_frame=%d\n",
+			info_frame);
+		ret += sprintf(buf + ret,
+			"hs=%d, he=%d, vs=%d, ve=%d\n",
+			cur_dispbuf->pic_mode.hs,
+			cur_dispbuf->pic_mode.he,
+			cur_dispbuf->pic_mode.vs,
+			cur_dispbuf->pic_mode.ve);
+		ret += sprintf(buf + ret, "screen_mode=%d\n",
+			cur_dispbuf->pic_mode.screen_mode);
+		ret += sprintf(buf + ret, "custom_ar=%d\n",
+			cur_dispbuf->pic_mode.custom_ar);
+		ret += sprintf(buf + ret, "AFD_enable=%d\n",
+			cur_dispbuf->pic_mode.AFD_enable);
+		return ret;
+	}
+	return sprintf(buf, "NA\n");
+}
+
+static ssize_t video_inuse_show(struct class *class,
+			struct class_attribute *attr, char *buf)
+{
+	size_t r;
+
+	mutex_lock(&video_inuse_mutex);
+	if (video_inuse == 0) {
+		r = sprintf(buf, "%d\n", video_inuse);
+		video_inuse = 1;
+		pr_info("video_inuse return 0,set 1\n");
+	} else {
+		r = sprintf(buf, "%d\n", video_inuse);
+		pr_info("video_inuse = %d\n", video_inuse);
+	}
+	mutex_unlock(&video_inuse_mutex);
+	return r;
+}
+
+static ssize_t video_inuse_store(struct class *class,
+			struct class_attribute *attr,
+			const char *buf, size_t count)
+{
+	size_t r;
+	int val;
+
+	mutex_lock(&video_inuse_mutex);
+	r = kstrtoint(buf, 0, &val);
+	pr_info("set video_inuse val:%d\n", val);
+	video_inuse = val;
+	mutex_unlock(&video_inuse_mutex);
+	if (r != 1)
+		return -EINVAL;
+
+	return count;
+}
 
 static struct class_attribute amvideo_class_attrs[] = {
 	__ATTR(axis,
@@ -8545,6 +9264,10 @@ static struct class_attribute amvideo_class_attrs[] = {
 	       0664,
 	       video_disable_show,
 	       video_disable_store),
+	 __ATTR(video_global_output,
+			0664,
+			video_global_output_show,
+			video_global_output_store),
 	__ATTR(zoom,
 	       0664,
 	       video_zoom_show,
@@ -8644,6 +9367,13 @@ static struct class_attribute amvideo_class_attrs[] = {
 #ifdef CONFIG_AM_VOUT
 	__ATTR_RO(device_resolution),
 #endif
+#ifdef PTS_TRACE_DEBUG
+	__ATTR_RO(pts_trace),
+#endif
+	__ATTR(video_inuse,
+	       0664,
+	       video_inuse_show,
+	       video_inuse_store),
 	__ATTR_RO(frame_addr),
 	__ATTR_RO(frame_canvas_width),
 	__ATTR_RO(frame_canvas_height),
@@ -8656,6 +9386,7 @@ static struct class_attribute amvideo_class_attrs[] = {
 	__ATTR_RO(video_state),
 	__ATTR_RO(fps_info),
 	__ATTR_RO(video_layer1_state),
+	__ATTR_RO(pic_mode_info),
 	__ATTR_NULL
 };
 
@@ -9044,6 +9775,8 @@ static int __init video_early_init(void)
 	/*(3<<9) | (1<<8) | (0)); // fclk_div7/1 = 364M*/
 	/*moved to vpu.c, default config by dts */
 
+	u32 cur_hold_line;
+
 #if 0	/* if (0 >= VMODE_MAX) //DEBUG_TMP */
 #if 1				/* MESON_CPU_TYPE >= MESON_CPU_TYPE_MESON6 */
 		if (cpu_after_eq(MESON_CPU_MAJOR_ID_GXTVBB))
@@ -9124,7 +9857,8 @@ static int __init video_early_init(void)
 		 */
 		WRITE_VCBUS_REG(VPP_DUMMY_DATA1, 0x1020080);
 		WRITE_VCBUS_REG(VPP_DUMMY_DATA, 0x42020);
-	} else if (is_meson_txlx_cpu()) {
+	} else if (is_meson_txlx_cpu() ||
+		cpu_after_eq(MESON_CPU_MAJOR_ID_G12A)) {
 		/*black 10bit*/
 		WRITE_VCBUS_REG(VPP_DUMMY_DATA, 0x4080200);
 	}
@@ -9135,6 +9869,14 @@ static int __init video_early_init(void)
 	/*disable sr default when power up*/
 	WRITE_VCBUS_REG(VPP_SRSHARP0_CTRL, 0);
 	WRITE_VCBUS_REG(VPP_SRSHARP1_CTRL, 0);
+
+	cur_hold_line = READ_VCBUS_REG(VPP_HOLD_LINES + cur_dev->vpp_off);
+	cur_hold_line = cur_hold_line & 0xff;
+
+	if (cur_hold_line > 0x1f)
+		vpp_hold_line = 0x1f;
+	else
+		vpp_hold_line = cur_hold_line;
 
 	/* Temp force set dmc */
 	if (!legacy_vpp)
@@ -9272,7 +10014,7 @@ static int __init video_init(void)
 	}
 #endif
 
-	if (is_meson_g12a_cpu()) {
+	if (is_meson_g12a_cpu() || is_meson_g12b_cpu()) {
 		cur_dev->viu_off = 0x3200 - 0x1a50;
 		legacy_vpp = false;
 	}
@@ -9428,6 +10170,7 @@ static int __init video_init(void)
 	set_clone_frame_rate(android_clone_rate, 0);
 #endif
 	REG_PATH_CONFIGS("media.video", video_configs);
+	video_debugfs_init();
 	return 0;
  err5:
 	device_destroy(&amvideo_class, MKDEV(AMVIDEO_MAJOR, 0));
@@ -9455,6 +10198,7 @@ static int __init video_init(void)
 
 static void __exit video_exit(void)
 {
+	video_debugfs_exit();
 	vf_unreg_receiver(&video_vf_recv);
 
 	vf_unreg_receiver(&video4osd_vf_recv);
@@ -9624,6 +10368,9 @@ MODULE_PARM_DESC(reverse, "reverse /disable reverse");
 
 MODULE_PARM_DESC(toggle_count, "\n toggle count\n");
 module_param(toggle_count, uint, 0664);
+
+MODULE_PARM_DESC(vpp_hold_line, "\n vpp_hold_line\n");
+module_param(vpp_hold_line, uint, 0664);
 
 MODULE_DESCRIPTION("AMLOGIC video output driver");
 MODULE_LICENSE("GPL");

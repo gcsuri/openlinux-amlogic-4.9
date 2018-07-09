@@ -25,6 +25,8 @@
 #include <linux/amlogic/media/vout/vout_notify.h>
 #include "cvbs_mode.h"
 
+#define CVBSOUT_VER "Ref.2018/07/02"
+
 #define CVBS_CLASS_NAME	"cvbs"
 #define CVBS_NAME	"cvbs"
 #define	MAX_NUMBER_PARA  10
@@ -48,6 +50,7 @@ enum cvbs_cpu_type {
 	CVBS_CPU_TYPE_GXM    = 2,
 	CVBS_CPU_TYPE_TXLX   = 3,
 	CVBS_CPU_TYPE_G12A   = 4,
+	CVBS_CPU_TYPE_G12B   = 5,
 };
 
 struct meson_cvbsout_data {

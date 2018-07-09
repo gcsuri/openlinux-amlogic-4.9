@@ -56,21 +56,9 @@ struct ve_regs_s {
 	unsigned int mode:1;
 	unsigned int rsv:5;
 };
-enum vlock_param_e {
-	VLOCK_EN = 0x0,
-	VLOCK_ADAPT,
-	VLOCK_MODE,
-	VLOCK_DIS_CNT_LIMIT,
-	VLOCK_DELTA_LIMIT,
-	VLOCK_DEBUG,
-	VLOCK_DYNAMIC_ADJUST,
-	VLOCK_STATE,
-	VLOCK_SYNC_LIMIT_FLAG,
-	VLOCK_DIS_CNT_NO_VF_LIMIT,
-	VLOCK_PARAM_MAX,
-};
 
 extern struct ve_hist_s video_ve_hist;
+extern void ve_hist_gamma_reset(void);
 extern unsigned int ve_size;
 extern struct ve_dnlp_s am_ve_dnlp;
 extern struct tcon_gamma_table_s video_gamma_table_r;
@@ -126,17 +114,6 @@ extern void amvecm_color_process(signed int sat_val,
 	signed int hue_val, struct vframe_s *vf);
 extern void amvecm_3d_black_process(void);
 extern void amvecm_3d_sync_process(void);
-extern void amve_vlock_process(struct vframe_s *vf);
-extern void amve_vlock_resume(void);
-extern void vlock_param_set(unsigned int val, enum vlock_param_e sel);
-extern void vlock_status(void);
-extern void vlock_reg_dump(void);
-extern void vlock_log_start(void);
-extern void vlock_log_stop(void);
-extern void vlock_log_print(void);
-
-int amvecm_hiu_reg_read(unsigned int reg, unsigned int *val);
-int amvecm_hiu_reg_write(unsigned int reg, unsigned int val);
 extern unsigned int vecm_latch_flag;
 extern unsigned int cm_size;
 extern unsigned int sync_3d_h_start;
@@ -148,7 +125,6 @@ extern unsigned int sync_3d_out_inv;
 extern unsigned int sync_3d_black_color;
 extern unsigned int sync_3d_sync_to_vbo;
 
-extern void __iomem *amvecm_hiu_reg_base;
 
 #ifndef CONFIG_AMLOGIC_MEDIA_VSYNC_RDMA
 #define VSYNC_WR_MPEG_REG(adr, val) WRITE_VPP_REG(adr, val)
@@ -162,23 +138,6 @@ extern int VSYNC_WR_MPEG_REG(u32 adr, u32 val);
 /* unsigned long long ve_get_vs_cnt(void); */
 /* #endif */
 extern int video_rgb_ogo_xvy_mtx;
-
-#define VLOCK_STATE_NULL 0
-#define VLOCK_STATE_ENABLE_STEP1_DONE 1
-#define VLOCK_STATE_ENABLE_STEP2_DONE 2
-#define VLOCK_STATE_DISABLE_STEP1_DONE 3
-#define VLOCK_STATE_DISABLE_STEP2_DONE 4
-#define VLOCK_STATE_ENABLE_FORCE_RESET 5
-
-/* video lock */
-#define VLOCK_MODE_ENC         0
-#define VLOCK_MODE_AUTO_PLL    1
-#define VLOCK_MODE_MANUAL_PLL  2
-#define XTAL_VLOCK_CLOCK   24000000/*vlock use xtal clock*/
-
-/* 0:enc;1:pll;2:manual pll */
-extern unsigned int vlock_mode;
-extern unsigned int vlock_en;
 extern unsigned int dnlp_sel;
 extern void ve_dnlp_load_reg(void);
 
@@ -190,5 +149,12 @@ extern struct am_regs_s sr1reg_sd_scale;
 extern struct am_regs_s sr1reg_hd_scale;
 extern struct am_regs_s sr1reg_cvbs;
 extern struct am_regs_s sr1reg_hv_noscale;
+extern void amvecm_fresh_overscan(struct vframe_s *vf);
+extern void amvecm_reset_overscan(void);
+extern int vpp_set_lut3d(int enable, int bLut3DLoad,
+	int *pLut3D, int bLut3DCheck);
+extern void vpp_lut3d_table_init(int *pLut3D);
+extern void dump_plut3d_table(void);
+extern void dump_plut3d_reg_table(void);
 #endif
 

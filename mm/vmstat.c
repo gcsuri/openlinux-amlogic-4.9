@@ -1165,18 +1165,12 @@ static void pagetypeinfo_showfree_print(struct seq_file *m,
 					pg_data_t *pgdat, struct zone *zone)
 {
 	int order, mtype;
-#ifdef CONFIG_AMLOGIC_MEMORY_EXTEND
-	unsigned long total;
-#endif /* CONFIG_AMLOGIC_MEMORY_EXTEND */
 
 	for (mtype = 0; mtype < MIGRATE_TYPES; mtype++) {
 		seq_printf(m, "Node %4d, zone %8s, type %12s ",
 					pgdat->node_id,
 					zone->name,
 					migratetype_names[mtype]);
-	#ifdef CONFIG_AMLOGIC_MEMORY_EXTEND
-		total = 0;
-	#endif /* CONFIG_AMLOGIC_MEMORY_EXTEND */
 		for (order = 0; order < MAX_ORDER; ++order) {
 			unsigned long freecount = 0;
 			struct free_area *area;
@@ -1187,14 +1181,7 @@ static void pagetypeinfo_showfree_print(struct seq_file *m,
 			list_for_each(curr, &area->free_list[mtype])
 				freecount++;
 			seq_printf(m, "%6lu ", freecount);
-		#ifdef CONFIG_AMLOGIC_MEMORY_EXTEND
-			total += (freecount << order);
-		#endif /* CONFIG_AMLOGIC_MEMORY_EXTEND */
 		}
-	#ifdef CONFIG_AMLOGIC_MEMORY_EXTEND
-		/* show total size for each migrate type*/
-		seq_printf(m, " %6lu", total);
-	#endif /* CONFIG_AMLOGIC_MEMORY_EXTEND */
 		seq_putc(m, '\n');
 	}
 }
@@ -1209,9 +1196,6 @@ static int pagetypeinfo_showfree(struct seq_file *m, void *arg)
 	seq_printf(m, "%-43s ", "Free pages count per migrate type at order");
 	for (order = 0; order < MAX_ORDER; ++order)
 		seq_printf(m, "%6d ", order);
-#ifdef CONFIG_AMLOGIC_MEMORY_EXTEND
-	seq_printf(m, "%s", "  total");
-#endif /* CONFIG_AMLOGIC_MEMORY_EXTEND */
 	seq_putc(m, '\n');
 
 	walk_zones_in_node(m, pgdat, pagetypeinfo_showfree_print);
@@ -1367,8 +1351,6 @@ static bool is_zone_first_populated(pg_data_t *pgdat, struct zone *zone)
 			return zone == compare;
 	}
 
-	/* The zone must be somewhere! */
-	WARN_ON_ONCE(1);
 	return false;
 }
 
@@ -1403,18 +1385,24 @@ static void zoneinfo_show_print(struct seq_file *m, pg_data_t *pgdat,
 		   zone->present_pages,
 		   zone->managed_pages);
 
-	for (i = 0; i < NR_VM_ZONE_STAT_ITEMS; i++)
-		seq_printf(m, "\n      %-12s %lu", vmstat_text[i],
-				zone_page_state(zone, i));
-
 	seq_printf(m,
 		   "\n        protection: (%ld",
 		   zone->lowmem_reserve[0]);
 	for (i = 1; i < ARRAY_SIZE(zone->lowmem_reserve); i++)
 		seq_printf(m, ", %ld", zone->lowmem_reserve[i]);
-	seq_printf(m,
-		   ")"
-		   "\n  pagesets");
+	seq_putc(m, ')');
+
+	/* If unpopulated, no other information is useful */
+	if (!populated_zone(zone)) {
+		seq_putc(m, '\n');
+		return;
+	}
+
+	for (i = 0; i < NR_VM_ZONE_STAT_ITEMS; i++)
+		seq_printf(m, "\n      %-12s %lu", vmstat_text[i],
+				zone_page_state(zone, i));
+
+	seq_printf(m, "\n  pagesets");
 	for_each_online_cpu(i) {
 		struct per_cpu_pageset *pageset;
 
@@ -1437,7 +1425,7 @@ static void zoneinfo_show_print(struct seq_file *m, pg_data_t *pgdat,
 		   "\n  node_unreclaimable:  %u"
 		   "\n  start_pfn:           %lu"
 		   "\n  node_inactive_ratio: %u",
-		   !pgdat_reclaimable(zone->zone_pgdat),
+		   pgdat->kswapd_failures >= MAX_RECLAIM_RETRIES,
 		   zone->zone_start_pfn,
 		   zone->zone_pgdat->inactive_ratio);
 	seq_putc(m, '\n');

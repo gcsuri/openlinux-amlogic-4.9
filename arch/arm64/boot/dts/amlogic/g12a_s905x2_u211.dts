@@ -164,6 +164,14 @@
 			default-state = "off";
 			linux,default-trigger = "rc_feedback";
 		};
+
+		sys_led {
+			label="sys_led";
+			gpios=<&gpio_ao GPIOAO_11 GPIO_ACTIVE_LOW>;
+			default-state ="on";
+			retain-state-suspended;
+			linux,default-trigger="cpu0";
+		};
 	};
 
 	cvbsout {
@@ -178,19 +186,26 @@
 			"venci_0_gate",
 			"venci_1_gate",
 			"vdac_clk_gate";
+		clk_path = <0>;
 
 		/* performance: reg_address, reg_value */
 		/* g12a */
 		performance = <0x1bf0  0x9
-			0x1b56  0x343
+			0x1b56  0x333
+			0x1b12  0x8080
+			0x1b05  0xfd
+			0x1c59  0xf850
+			0xffff  0x0>; /* ending flag */
+		performance_sarft = <0x1bf0  0x9
+			0x1b56  0x333
 			0x1b12  0x0
 			0x1b05  0x9
 			0x1c59  0xfc48
 			0xffff  0x0>; /* ending flag */
-		performance_telecom = <0x1bf0  0x9
-			0x1b56  0x333
+		performance_revB_telecom = <0x1bf0  0x9
+			0x1b56  0x546
 			0x1b12  0x8080
-			0x1b05  0xfd
+			0x1b05  0x9
 			0x1c59  0xf850
 			0xffff  0x0>; /* ending flag */
 	};
@@ -272,7 +287,15 @@
 		dev_name = "ionvideo";
 		status = "okay";
 	};
-
+	dvb{
+	    compatible = "amlogic, dvb";
+		dev_name = "dvb";
+		status = "ok";
+		/*"parallel","serial","disable"*/
+		ts2 = "parallel";
+		ts2_control = <0>;
+		ts2_invert = <0>;
+	};
 	unifykey{
 		compatible = "amlogic, unifykey";
 		status = "ok";
@@ -408,6 +431,8 @@
 		gamma_en = <0>;/*1:enabel ;0:disable*/
 		wb_en = <0>;/*1:enabel ;0:disable*/
 		cm_en = <0>;/*1:enabel ;0:disable*/
+		/*0: 709/601  1: bt2020*/
+		tx_op_color_primary = <0>;
 	};
 
 	amdolby_vision {
@@ -415,29 +440,6 @@
 		dev_name = "aml_amdolby_vision_driver";
 		status = "okay";
 		tv_mode = <0>;/*1:enabel ;0:disable*/
-	};
-
-	meson-fb {
-		compatible = "amlogic, meson-g12a";
-		memory-region = <&logo_reserved>;
-		dev_name = "meson-fb";
-		status = "okay";
-		interrupts = <0 3 1
-			0 56 1
-			0 89 1>;
-		interrupt-names = "viu-vsync", "viu2-vsync", "rdma";
-		mem_size = <0x00800000 0x1980000 0x100000 0x100000 0x800000>;
-		/* uboot logo,fb0/fb1 memory size,if afbcd fb0=0x01851000*/
-		display_mode_default = "1080p60hz";
-		scale_mode = <1>;
-		/** 0:VPU free scale 1:OSD free scale 2:OSD super scale */
-		display_size_default = <1920 1080 1920 2160 32>;
-		/*1920*1080*4*3 = 0x17BB000*/
-		pxp_mode = <0>; /** 0:normal mode 1:pxp mode */
-		mem_alloc = <0>;
-		logo_addr = "0x3f800000";
-		clocks = <&clkc CLKID_VPU_CLKC_MUX>;
-		clock-names = "vpu_clkc";
 	};
 
 	/* Audio Related start */
@@ -604,6 +606,7 @@
 		/* spdif_b to hdmi, only playback */
 		aml-audio-card,dai-link@5 {
 			mclk-fs = <128>;
+			continuous-clock;
 			/* suffix-name, sync with android audio hal
 			 * what's the dai link used for
 			 */
@@ -662,6 +665,7 @@
 	};
 	/* Audio Related end */
 
+	/*DCDC for SY8120B1ABC*/
 	cpu_opp_table0: cpu_opp_table0 {
 		compatible = "operating-points-v2";
 		opp-shared;
@@ -688,27 +692,27 @@
 		};
 		opp05 {
 			opp-hz = /bits/ 64 <1200000000>;
-			opp-microvolt = <731000>;
+			opp-microvolt = <761000>;
 		};
 		opp06 {
 			opp-hz = /bits/ 64 <1398000000>;
-			opp-microvolt = <761000>;
+			opp-microvolt = <791000>;
 		};
 		opp07 {
 			opp-hz = /bits/ 64 <1512000000>;
-			opp-microvolt = <791000>;
+			opp-microvolt = <831000>;
 		};
 		opp08 {
 			opp-hz = /bits/ 64 <1608000000>;
-			opp-microvolt = <831000>;
+			opp-microvolt = <871000>;
 		};
 		opp09 {
 			opp-hz = /bits/ 64 <1704000000>;
-			opp-microvolt = <861000>;
+			opp-microvolt = <921000>;
 		};
 		opp10 {
-			opp-hz = /bits/ 64 <1896000000>;
-			opp-microvolt = <981000>;
+			opp-hz = /bits/ 64 <1908000000>;
+			opp-microvolt = <1011000>;
 		};
 	};
 
@@ -720,6 +724,15 @@
 	};
 
 }; /* end of / */
+
+&meson_fb {
+	status = "okay";
+	display_size_default = <1920 1080 1920 2160 32>;
+	mem_size = <0x00800000 0x1980000 0x100000 0x100000 0x800000>;
+	logo_addr = "0x7f800000";
+	mem_alloc = <0>;
+	pxp_mode = <0>; /** 0:normal mode 1:pxp mode */
+};
 
 &pwm_AO_cd {
 		status = "okay";
@@ -815,7 +828,7 @@
 		 * 3: spdifout;
 		 * 4: spdifout_b;
 		 */
-		samesource_sel = <4>;
+		samesource_sel = <3>;
 	};
 
 	aml_tdmc: tdmc {
@@ -969,7 +982,7 @@
 		hi_th = <0x70000>;
 		lo_th = <0x16000>;
 
-		status = "okay";
+		status = "disabled";
 	};
 }; /* end of audiobus */
 
@@ -1112,8 +1125,9 @@
 };
 &ethmac {
 	status = "okay";
-	pinctrl-names = "internal_eth_pins";
+	pinctrl-names = "internal_eth_pins", "internal_gpio_pins";
 	pinctrl-0 = <&internal_eth_pins>;
+	pinctrl-1 = <&internal_gpio_pins>;
 	mc_val = <0x4be04>;
 
 	internal_phy=<1>;
@@ -1299,4 +1313,11 @@
 	status = "okay";
 };
 
+&saradc {
+	status = "disabled";
+};
+
+&defendkey {
+	status = "okay";
+};
 

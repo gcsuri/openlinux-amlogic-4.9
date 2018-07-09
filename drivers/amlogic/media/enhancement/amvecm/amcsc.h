@@ -69,6 +69,9 @@ enum vpp_matrix_csc_e {
 	VPP_MATRIX_YUV709F_RGB = 0x24,
 	VPP_MATRIX_YUV709F_YUV601 = 0x25,
 	VPP_MATRIX_YUV709F_YUV709 = 0x26,
+	VPP_MATRIX_YUV601L_YUV709L = 0x27,
+	VPP_MATRIX_YUV709L_YUV601L = 0x28,
+	VPP_MATRIX_YUV709F_YUV601F = 0x29,
 	VPP_MATRIX_BT2020YUV_BT2020RGB = 0x40,
 	VPP_MATRIX_BT2020RGB_709RGB,
 	VPP_MATRIX_BT2020RGB_CUSRGB,
@@ -108,6 +111,9 @@ enum mtx_en_e {
 #define XVY_MTX_EN_MASK  (1 << XVY_MTX_EN)
 #define OSD1_MTX_EN_MASK (1 << OSD1_MTX_EN)
 
+#define HDR_SUPPORT		(1 << 2)
+#define HLG_SUPPORT		(1 << 3)
+
 #define LUT_289_SIZE	289
 extern unsigned int lut_289_mapping[LUT_289_SIZE];
 extern int dnlp_en;
@@ -119,22 +125,34 @@ extern signed int saturation_offset;
 extern uint sdr_mode;
 extern uint hdr_flag;
 extern int video_rgb_ogo_xvy_mtx_latch;
+extern int video_rgb_ogo_xvy_mtx;
+extern int tx_op_color_primary;
 
 extern int amvecm_matrix_process(
 	struct vframe_s *vf, struct vframe_s *vf_rpt, int flags);
 extern int amvecm_hdr_dbg(u32 sel);
-#ifndef CONFIG_AMLOGIC_MEDIA_VSYNC_RDMA
-#define VSYNC_WR_MPEG_REG(adr, val) WRITE_VPP_REG(adr, val)
-#define VSYNC_RD_MPEG_REG(adr) READ_VPP_REG(adr)
-#define VSYNC_WR_MPEG_REG_BITS(adr, val, start, len) \
-	WRITE_VPP_REG_BITS(adr, val, start, len)
-#else
-extern int VSYNC_WR_MPEG_REG_BITS(u32 adr, u32 val, u32 start, u32 len);
-extern u32 VSYNC_RD_MPEG_REG(u32 adr);
-extern int VSYNC_WR_MPEG_REG(u32 adr, u32 val);
-#endif
 
 extern u32 get_video_enabled(void);
+extern void get_hdr_source_type(void);
+
+/*hdr*/
+/*#define DBG_BUF_SIZE (1024)*/
+
+struct hdr_cfg_t {
+	unsigned int en_osd_lut_100;
+};
+struct hdr_data_t {
+	struct hdr_cfg_t hdr_cfg;
+
+	/*debug_fs*/
+	struct dentry *dbg_root;
+	/*char dbg_buf[DBG_BUF_SIZE];*/
+
+};
+
+extern void hdr_init(struct hdr_data_t *phdr_data);
+extern void hdr_exit(void);
+extern void hdr_set_cfg_osd_100(int val);
 
 #endif /* AM_CSC_H */
 

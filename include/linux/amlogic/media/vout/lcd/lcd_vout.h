@@ -81,6 +81,7 @@ enum lcd_chip_e {
 	LCD_CHIP_TXLX,  /* 3 */
 	LCD_CHIP_AXG,   /* 4 */
 	LCD_CHIP_G12A,  /* 5 */
+	LCD_CHIP_G12B,  /* 6 */
 	LCD_CHIP_MAX,
 };
 
@@ -276,8 +277,8 @@ struct dsi_config_s {
 	unsigned char operation_mode_init; /* 0=video mode, 1=command mode */
 	unsigned char operation_mode_display; /* 0=video mode, 1=command mode */
 	unsigned char video_mode_type; /* 0=sync_pulse, 1=sync_event, 2=burst */
-	unsigned char clk_lp_continuous; /* 0=stop, 1=continue */
-	unsigned char phy_stop_wait; /* 0=auto, 1=standard, 2=slow */
+	unsigned char clk_always_hs; /* 0=disable, 1=enable */
+	unsigned char phy_switch; /* 0=auto, 1=standard, 2=slow */
 
 	unsigned int venc_data_width;
 	unsigned int dpi_data_format;
@@ -290,6 +291,8 @@ struct dsi_config_s {
 	unsigned char check_reg;
 	unsigned char check_cnt;
 	unsigned char check_state;
+
+	unsigned char current_mode;
 };
 
 struct lcd_control_config_s {
@@ -362,6 +365,7 @@ struct lcd_clk_gate_ctrl_s {
 	struct reset_control *vencl;
 };
 
+#define LCD_ENABLE_RETRY_MAX    3
 struct lcd_config_s {
 	char *lcd_propname;
 	unsigned int backlight_index;
@@ -373,6 +377,8 @@ struct lcd_config_s {
 	struct pinctrl *pin;
 	unsigned char pinmux_flag;
 	unsigned char change_flag;
+	unsigned char retry_enable_flag;
+	unsigned char retry_enable_cnt;
 	struct lcd_clk_gate_ctrl_s rstc;
 };
 
@@ -429,7 +435,6 @@ struct aml_lcd_drv_s {
 
 	struct workqueue_struct *workqueue;
 	struct delayed_work lcd_probe_delayed_work;
-	struct delayed_work lcd_vx1_delayed_work;
 	struct work_struct  lcd_resume_work;
 	struct resource *res_vsync_irq;
 	struct resource *res_vx1_irq;

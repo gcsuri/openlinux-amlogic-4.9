@@ -188,6 +188,7 @@ enum mmc_chip_e {
 	MMC_CHIP_GXLX = 0x26,
 	MMC_CHIP_TXHD = 0x27,
 	MMC_CHIP_G12A = 0x28,
+	MMC_CHIP_G12B = 0x29,
 };
 
 struct mmc_phase {
@@ -217,6 +218,7 @@ struct meson_mmc_data {
 	unsigned int ds_pin_poll;
 	unsigned int ds_pin_poll_en;
 	unsigned int ds_pin_poll_bit;
+	unsigned int latest_dat;
 	struct para_e sdmmc;
 };
 
@@ -262,6 +264,7 @@ struct amlsd_platform {
 	unsigned char signal_voltage;
 	int	bus_width;
 	int	bl_len;
+	int	stop_clk;
 
 	unsigned int low_burst;
 	struct mutex in_out_lock;
@@ -299,6 +302,7 @@ struct amlsd_platform {
 	unsigned char caling;
 	unsigned char calout[20][20];
 #endif
+	unsigned int latest_dat;
 	u64 align[10];
 	int base_line;
 	unsigned int count;
@@ -412,8 +416,6 @@ struct amlsd_host {
 	char is_tunning;
 	char is_timming;
 	char tuning_mode;
-	char cur_dev[32];
-	unsigned int val_f;
 	unsigned int is_sduart;
 	unsigned int irq;
 	unsigned int irq_in;
@@ -1316,21 +1318,21 @@ struct sd_emmc_clock_v3 {
 	 */
 	u32 rx_phase:2;
 	u32 sram_pd:2;
-	/*[19:16]   TX clock delay line. 0: no delay,
+	/*[21:16]   TX clock delay line. 0: no delay,
 	 *n: delay n*200ps. Maximum delay 3ns.
 	 */
 	u32 tx_delay:6;
-	/*[23:20]   RX clock delay line. 0: no delay,
+	/*[27:22]   RX clock delay line. 0: no delay,
 	 *n: delay n*200ps. Maximum delay 3ns.
 	 */
 	u32 rx_delay:6;
-	/*[24]	  1: Keep clock always on.
+	/*[28]	  1: Keep clock always on.
 	 *0: Clock on/off controlled by activities.
 	 */
 	u32 always_on:1;
-	/*[25]	1: enable IRQ sdio when in sleep mode. */
+	/*[29]	1: enable IRQ sdio when in sleep mode. */
 	u32 irq_sdio_sleep:1;
-	/*[26]	1: select DS as IRQ source during sleep.. */
+	/*[30]	1: select DS as IRQ source during sleep.. */
 	u32 irq_sdio_sleep_ds:1;
 	u32 reserved31:1;
 };

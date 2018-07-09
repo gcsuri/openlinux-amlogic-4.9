@@ -105,6 +105,7 @@ struct ldim_max_s {
 };
 #endif
 
+extern unsigned int game_mode;
 
 /* ************************************************************************ */
 /* ******** GLOBAL FUNCTION CLAIM ******** */
@@ -160,6 +161,7 @@ extern void vdin_set_cm2(unsigned int offset, unsigned int w,
 extern void vdin_bypass_isp(unsigned int offset);
 extern void vdin_set_mpegin(struct vdin_dev_s *devp);
 extern void vdin_force_gofiled(struct vdin_dev_s *devp);
+extern void vdin_adjust_tvafesnow_brightness(void);
 extern void vdin_set_config(struct vdin_dev_s *devp);
 extern void vdin_set_wr_mif(struct vdin_dev_s *devp);
 extern void vdin_dolby_config(struct vdin_dev_s *devp);
@@ -196,5 +198,9 @@ extern void vdin_set_display_ratio(struct vdin_dev_s *devp,
 extern void vdin_source_bitdepth_reinit(struct vdin_dev_s *devp);
 extern void set_invert_top_bot(bool invert_flag);
 extern void vdin_clk_onoff(struct vdin_dev_s *devp, bool onoff);
+extern enum tvin_force_color_range_e color_range_force;
+
+extern void vdin_vlock_input_sel(unsigned int type,
+	enum vframe_source_type_e source_type);
 #endif
 

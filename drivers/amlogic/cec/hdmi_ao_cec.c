@@ -91,9 +91,16 @@ struct cec_platform_data_s {
 	bool ee_to_ao;/*ee cec hw module mv to ao;ao cec delete*/
 };
 
+struct cec_wakeup_t {
+	unsigned int wk_logic_addr:8;
+	unsigned int wk_phy_addr:16;
+	unsigned int wk_port_id:8;
+};
+
 /* global struct for tx and rx */
 struct ao_cec_dev {
 	unsigned long dev_type;
+	struct device_node *node;
 	unsigned int port_num;
 	unsigned int arc_port;
 	unsigned int hal_flag;
@@ -115,6 +122,8 @@ struct ao_cec_dev {
 	spinlock_t cec_reg_lock;
 	struct mutex cec_mutex;
 	struct mutex cec_ioctl_mutex;
+	struct cec_wakeup_t wakup_data;
+	unsigned int wakeup_reason;
 #ifdef CONFIG_PM
 	int cec_suspend;
 #endif
@@ -154,7 +163,7 @@ static unsigned int  new_msg;
 static bool wake_ok = 1;
 static bool ee_cec;
 static bool pin_status;
-static bool cec_msg_dbg_en;
+bool cec_msg_dbg_en;
 
 #define CEC_ERR(format, args...)				\
 	{if (cec_dev->dbg_dev)					\
@@ -168,12 +177,15 @@ static bool cec_msg_dbg_en;
 
 static unsigned char msg_log_buf[128] = { 0 };
 
+static void cec_hw_reset(void);
+
 #define waiting_aocec_free(r) \
 	do {\
 		unsigned long cnt = 0;\
 		while (readl(cec_dev->cec_reg + r) & (1<<23)) {\
 			if (cnt++ == 3500) { \
 				pr_info("waiting aocec %x free time out\n", r);\
+				cec_hw_reset();\
 				break;\
 			} \
 		} \
@@ -195,8 +207,8 @@ unsigned int aocec_rd_reg(unsigned long addr)
 	unsigned int data32;
 	unsigned long flags;
 
-	waiting_aocec_free(AO_CEC_RW_REG);
 	spin_lock_irqsave(&cec_dev->cec_reg_lock, flags);
+	waiting_aocec_free(AO_CEC_RW_REG);
 	data32 = 0;
 	data32 |= 0 << 16; /* [16]	 cec_reg_wr */
 	data32 |= 0 << 8; /* [15:8]   cec_reg_wrdata */
@@ -214,8 +226,8 @@ void aocec_wr_reg(unsigned long addr, unsigned long data)
 	unsigned long data32;
 	unsigned long flags;
 
-	waiting_aocec_free(AO_CEC_RW_REG);
 	spin_lock_irqsave(&cec_dev->cec_reg_lock, flags);
+	waiting_aocec_free(AO_CEC_RW_REG);
 	data32 = 0;
 	data32 |= 1 << 16; /* [16]	 cec_reg_wr */
 	data32 |= data << 8; /* [15:8]   cec_reg_wrdata */
@@ -748,7 +760,7 @@ static void cec_hw_reset(void)
 	cec_arbit_bit_time_set(7, 0x2aa, 0);
 
 	CEC_INFO("hw reset :logical addr:0x%x\n",
-		aocec_rd_reg(CEC_LOGICAL_ADDR0));
+	aocec_rd_reg(CEC_LOGICAL_ADDR0));
 }
 
 void cec_rx_buf_clear(void)
@@ -933,6 +945,8 @@ static int cec_ll_trigle_tx(const unsigned char *msg, int len)
 		}
 		cec_timeout_cnt = 0;
 		return 0;
+	} else {
+		CEC_ERR("error msg sts:0x%x\n", reg);
 	}
 	return -1;
 }
@@ -1127,49 +1141,93 @@ try_again:
 /* -------------------------------------------------------------------------- */
 /* AO CEC0 config */
 /* -------------------------------------------------------------------------- */
-void ao_cec_init(void)
+static void ao_ceca_init(void)
 {
 	unsigned long data32;
 	unsigned int reg;
+	unsigned int chiptype;
 
-	if (get_meson_cpu_version(MESON_CPU_VERSION_LVL_MAJOR) >=
-		MESON_CPU_MAJOR_ID_GXBB) {
-		reg =   (0 << 31) |
-			(0 << 30) |
-			(1 << 28) |		/* clk_div0/clk_div1 in turn */
-			((732-1) << 12) |	/* Div_tcnt1 */
-			((733-1) << 0);		/* Div_tcnt0 */
-		writel(reg, cec_dev->cec_reg + AO_RTC_ALT_CLK_CNTL0);
-		reg =   (0 << 13) |
-			((11-1)  << 12) |
-			((8-1)  <<  0);
-		writel(reg, cec_dev->cec_reg + AO_RTC_ALT_CLK_CNTL1);
+	chiptype = get_meson_cpu_version(MESON_CPU_VERSION_LVL_MAJOR);
 
-		reg = readl(cec_dev->cec_reg + AO_RTC_ALT_CLK_CNTL0);
-		reg |= (1 << 31);
-		writel(reg, cec_dev->cec_reg + AO_RTC_ALT_CLK_CNTL0);
+	/*CEC_INFO("chiptype=0x%x\n", chiptype);*/
+	if (chiptype >= MESON_CPU_MAJOR_ID_GXBB) {
+		if (cec_dev->plat_data->ee_to_ao) {
+			reg = (0 << 31) |
+				(0 << 30) |
+				(1 << 28) | /* clk_div0/clk_div1 in turn */
+				((732-1) << 12) |/* Div_tcnt1 */
+				((733-1) << 0); /* Div_tcnt0 */
+			writel(reg, cec_dev->cec_reg + AO_CEC_CLK_CNTL_REG0);
+			reg = (0 << 13) |
+				((11-1)  << 12) |
+				((8-1)	<<	0);
+			writel(reg, cec_dev->cec_reg + AO_CEC_CLK_CNTL_REG1);
+			/*enable clk in*/
+			reg = readl(cec_dev->cec_reg + AO_CEC_CLK_CNTL_REG0);
+			reg |= (1 << 31);
+			writel(reg, cec_dev->cec_reg + AO_CEC_CLK_CNTL_REG0);
+			/*enable clk out*/
+			udelay(200);
+			reg |= (1 << 30);
+			writel(reg, cec_dev->cec_reg + AO_CEC_CLK_CNTL_REG0);
+		} else {
+			reg =	(0 << 31) |
+				(0 << 30) |
+				(1 << 28) | /* clk_div0/clk_div1 in turn */
+				((732-1) << 12) |/* Div_tcnt1 */
+				((733-1) << 0); /* Div_tcnt0 */
+			writel(reg, cec_dev->cec_reg + AO_RTC_ALT_CLK_CNTL0);
+			reg =	(0 << 13) |
+				((11-1)  << 12) |
+				((8-1)	<<	0);
+			writel(reg, cec_dev->cec_reg + AO_RTC_ALT_CLK_CNTL1);
 
-		udelay(200);
-		reg |= (1 << 30);
-		writel(reg, cec_dev->cec_reg + AO_RTC_ALT_CLK_CNTL0);
+			/*enable clk in*/
+			reg = readl(cec_dev->cec_reg + AO_RTC_ALT_CLK_CNTL0);
+			reg |= (1 << 31);
+			writel(reg, cec_dev->cec_reg + AO_RTC_ALT_CLK_CNTL0);
+			/*enable clk out*/
+			udelay(200);
+			reg |= (1 << 30);
+			writel(reg, cec_dev->cec_reg + AO_RTC_ALT_CLK_CNTL0);
+		}
 
-		reg = readl(cec_dev->cec_reg + AO_CRT_CLK_CNTL1);
-		reg |= (0x800 << 16);	/* select cts_rtc_oscin_clk */
-		writel(reg, cec_dev->cec_reg + AO_CRT_CLK_CNTL1);
+		if (cec_dev->plat_data->ee_to_ao) {
+			reg = readl(cec_dev->cec_reg + AO_RTI_PWR_CNTL_REG0);
+			reg |=	(0x01 << 14);/* enable the crystal clock*/
+			writel(reg, cec_dev->cec_reg + AO_RTI_PWR_CNTL_REG0);
+		} else {
+			reg = readl(cec_dev->cec_reg + AO_CRT_CLK_CNTL1);
+			reg |= (0x800 << 16);/* select cts_rtc_oscin_clk */
+			writel(reg, cec_dev->cec_reg + AO_CRT_CLK_CNTL1);
 
-		reg = readl(cec_dev->cec_reg + AO_RTI_PWR_CNTL_REG0);
-		reg &= ~(0x07 << 10);
-		reg |=  (0x04 << 10);	/* XTAL generate 32k */
-		writel(reg, cec_dev->cec_reg + AO_RTI_PWR_CNTL_REG0);
+			reg = readl(cec_dev->cec_reg + AO_RTI_PWR_CNTL_REG0);
+			reg &= ~(0x07 << 10);
+			reg |=	(0x04 << 10);/* XTAL generate 32k */
+			writel(reg, cec_dev->cec_reg + AO_RTI_PWR_CNTL_REG0);
+		}
 	}
 
-	data32  = 0;
-	data32 |= 0 << 1;   /* [2:1]	cntl_clk: */
+	if (cec_dev->plat_data->ee_to_ao) {
+		data32	= 0;
+		data32 |= (7 << 12);	/* filter_del */
+		data32 |= (1 <<  8);	/* filter_tick: 1us */
+		data32 |= (1 <<  3);	/* enable system clock*/
+		data32 |= 0 << 1;	/* [2:1]	cntl_clk: */
 				/* 0=Disable clk (Power-off mode); */
-				/* 1=Enable gated clock (Normal mode); */
-				/* 2=Enable free-run clk (Debug mode). */
-	data32 |= 1 << 0;   /* [0]	  sw_reset: 1=Reset */
-	writel(data32, cec_dev->cec_reg + AO_CEC_GEN_CNTL);
+				/* 1=Enable gated clock (Normal mode);*/
+				/* 2=Enable free-run clk (Debug mode).*/
+		data32 |= 1 << 0;	/* [0]	  sw_reset: 1=Reset*/
+		writel(data32, cec_dev->cec_reg + AO_CEC_GEN_CNTL);
+	} else {
+		data32	= 0;
+		data32 |= 0 << 1;	/* [2:1]	cntl_clk:*/
+				/* 0=Disable clk (Power-off mode);*/
+				/* 1=Enable gated clock (Normal mode);*/
+				/* 2=Enable free-run clk (Debug mode).*/
+		data32 |= 1 << 0;	/* [0]	  sw_reset: 1=Reset */
+		writel(data32, cec_dev->cec_reg + AO_CEC_GEN_CNTL);
+	}
 	/* Enable gated clock (Normal mode). */
 	cec_set_reg_bits(AO_CEC_GEN_CNTL, 1, 1, 1);
 	/* Release SW reset */
@@ -1293,19 +1351,19 @@ static void cec_pre_init(void)
 
 	if (ee_cec) {
 		cecrx_hw_init();
-		return;
-	}
-	ao_cec_init();
+	} else {
+		ao_ceca_init();
 
-	cec_arbit_bit_time_set(3, 0x118, 0);
-	cec_arbit_bit_time_set(5, 0x000, 0);
-	cec_arbit_bit_time_set(7, 0x2aa, 0);
+		cec_arbit_bit_time_set(3, 0x118, 0);
+		cec_arbit_bit_time_set(5, 0x000, 0);
+		cec_arbit_bit_time_set(7, 0x2aa, 0);
+	}
 }
 
 static int cec_late_check_rx_buffer(void)
 {
 	int ret;
-	struct delayed_work *dwork = &cec_dev->cec_work;
+	/*struct delayed_work *dwork = &cec_dev->cec_work;*/
 
 	ret = cec_rx_buf_check();
 	if (!ret)
@@ -1317,9 +1375,10 @@ static int cec_late_check_rx_buffer(void)
 		CEC_INFO("buffer got unrecorgnized msg\n");
 		cec_rx_buf_clear();
 		return 0;
+	} else {
+		/*mod_delayed_work(cec_dev->cec_thread, dwork, 0);*/
+		return 1;
 	}
-	mod_delayed_work(cec_dev->cec_thread, dwork, 0);
-	return 1;
 }
 
 void cec_key_report(int suspend)
@@ -1619,8 +1678,19 @@ static void cec_task(struct work_struct *work)
 	if (cec_dev && (!wake_ok || cec_service_suspended()))
 		cec_rx_process();
 
-	if (!cec_late_check_rx_buffer())
-		queue_delayed_work(cec_dev->cec_thread, dwork, CEC_FRAME_DELAY);
+
+	/*for check rx buffer for old chip version, cec rx irq process*/
+	/*in internal hdmi rx, for avoid msg lose */
+	if ((cec_dev->cpu_type < MESON_CPU_MAJOR_ID_TXLX) &&
+		(cec_config(0, 0) == CEC_FUNC_CFG_ALL)) {
+		if (cec_late_check_rx_buffer()) {
+			/*msg in*/
+			mod_delayed_work(cec_dev->cec_thread, dwork, 0);
+			return;
+		}
+	}
+	/*triger next process*/
+	queue_delayed_work(cec_dev->cec_thread, dwork, CEC_FRAME_DELAY);
 }
 
 static irqreturn_t cec_isr_handler(int irq, void *dev_instance)
@@ -1811,14 +1881,14 @@ static ssize_t port_status_show(struct class *cla,
 	if (cec_dev->dev_type == DEV_TYPE_PLAYBACK) {
 		tmp = tx_hpd;
 		return sprintf(buf, "%x\n", tmp);
+	} else {
+		tmp = hdmirx_rd_top(TOP_HPD_PWR5V);
+		CEC_INFO("TOP_HPD_PWR5V:%x\n", tmp);
+		tmp >>= 20;
+		tmp &= 0xf;
+		tmp |= (tx_hpd << 16);
+		return sprintf(buf, "%x\n", tmp);
 	}
-
-	tmp = hdmirx_rd_top(TOP_HPD_PWR5V);
-	CEC_INFO("TOP_HPD_PWR5V:%x\n", tmp);
-	tmp >>= 20;
-	tmp &= 0xf;
-	tmp |= (tx_hpd << 16);
-	return sprintf(buf, "%x\n", tmp);
 }
 
 static ssize_t pin_status_show(struct class *cla,
@@ -1862,6 +1932,7 @@ static ssize_t physical_addr_store(struct class *cla,
 
 	if (kstrtouint(buf, 16, &addr) != 0)
 		return -EINVAL;
+
 	if (addr > 0xffff || addr < 0) {
 		CEC_ERR("invalid input:%s\n", buf);
 		phy_addr_test = 0;
@@ -1940,6 +2011,7 @@ static ssize_t fun_cfg_show(struct class *cla,
 static ssize_t cec_version_show(struct class *cla,
 	struct class_attribute *attr, char *buf)
 {
+	CEC_INFO("driver date:%s\n", CEC_DRIVER_VERSION);
 	return sprintf(buf, "%d\n", cec_dev->cec_info.cec_version);
 }
 
@@ -2068,7 +2140,9 @@ static void init_cec_port_info(struct hdmi_port_info *port,
 		} else
 			break;
 	}
-	if (cec_dev->dev_type == DEV_TYPE_TUNER)
+	if ((cec_dev->dev_type == DEV_TYPE_TUNER) ||
+		(cec_dev->dev_type == DEV_TYPE_PLAYBACK) ||
+		(cec_dev->dev_type == DEV_TYPE_AUDIO_SYSTEM))
 		b = cec_dev->port_num - 1;
 	else
 		b = cec_dev->port_num;
@@ -2101,7 +2175,9 @@ static void init_cec_port_info(struct hdmi_port_info *port,
 			break;
 	}
 
-	if (cec_dev->dev_type == DEV_TYPE_TUNER) {
+	if ((cec_dev->dev_type == DEV_TYPE_TUNER) ||
+		(cec_dev->dev_type == DEV_TYPE_PLAYBACK) ||
+		(cec_dev->dev_type == DEV_TYPE_AUDIO_SYSTEM)) {
 		/* last port is for tx in mixed tx/rx */
 		port[e].type = HDMI_OUTPUT;
 		port[e].port_id = 0;		/* 0 for tx port id */
@@ -2117,9 +2193,9 @@ static long hdmitx_cec_ioctl(struct file *f,
 	void __user *argp = (void __user *)arg;
 	unsigned long tmp;
 	struct hdmi_port_info *port;
-	int a, b, c, d;
+	unsigned int a, b, c, d;
 	struct hdmitx_dev *tx_dev;
-	int tx_hpd;
+	unsigned int tx_hpd;
 
 	mutex_lock(&cec_dev->cec_ioctl_mutex);
 	switch (cmd) {
@@ -2245,12 +2321,12 @@ static long hdmitx_cec_ioctl(struct file *f,
 		tmp = (1 << HDMI_OPTION_ENABLE_CEC);
 		if (arg) {
 			cec_dev->hal_flag |= tmp;
-			cec_config(0x2f, 1);
+			cec_config(CEC_FUNC_CFG_ALL, 1);
 			cec_pre_init();
 		} else {
 			cec_dev->hal_flag &= ~(tmp);
 			CEC_INFO("disable CEC\n");
-			cec_config(0x0, 1);
+			cec_config(CEC_FUNC_CFG_NONE, 1);
 			cec_keep_reset();
 		}
 		break;
@@ -2259,7 +2335,7 @@ static long hdmitx_cec_ioctl(struct file *f,
 		tmp = (1 << HDMI_OPTION_SYSTEM_CEC_CONTROL);
 		if (arg) {
 			cec_dev->hal_flag |= tmp;
-			cec_config(0x2f, 1);
+			cec_config(CEC_FUNC_CFG_ALL, 1);
 		} else
 			cec_dev->hal_flag &= ~(tmp);
 		cec_dev->hal_flag |= (1 << HDMI_OPTION_SERVICE_FLAG);
@@ -2281,11 +2357,16 @@ static long hdmitx_cec_ioctl(struct file *f,
 			if (!a && cec_dev->dev_type == DEV_TYPE_TUNER)
 				tmp = tx_hpd;
 			else {	/* mixed for rx */
-				tmp = (hdmirx_rd_top(TOP_HPD_PWR5V) >> 20);
-				if (tmp & (1 << (a - 1)))
-					tmp = 1;
-				else
+				tmp = hdmirx_get_connect_info();
+				if (a >= 1) {
+					if (tmp & (1 << (a - 1)))
+						tmp = 1;
+					else
+						tmp = 0;
+				} else {
 					tmp = 0;
+					CEC_INFO("err port number %d\n", a);
+				}
 			}
 		}
 		if (copy_to_user(argp, &tmp, _IOC_SIZE(cmd))) {
@@ -2302,8 +2383,8 @@ static long hdmitx_cec_ioctl(struct file *f,
 		cec_dev->cec_info.power_status = POWER_ON;
 
 		cec_dev->cec_info.vendor_id = cec_dev->v_data.vendor_id;
-		strcpy(cec_dev->cec_info.osd_name,
-		       cec_dev->v_data.cec_osd_string);
+		strncpy(cec_dev->cec_info.osd_name,
+		       cec_dev->v_data.cec_osd_string, 14);
 
 		if (cec_dev->dev_type == DEV_TYPE_PLAYBACK)
 			cec_dev->cec_info.menu_status = DEVICE_MENU_ACTIVE;
@@ -2328,7 +2409,23 @@ static long hdmitx_cec_ioctl(struct file *f,
 		cec_enable_arc_pin(arg);
 		break;
 
+	case CEC_IOC_GET_BOOT_ADDR:
+		tmp = (cec_dev->wakup_data.wk_logic_addr << 16) |
+				cec_dev->wakup_data.wk_phy_addr;
+		CEC_ERR("Boot addr:%#x\n", (unsigned int)tmp);
+		if (copy_to_user(argp, &tmp, _IOC_SIZE(cmd)))
+			return -EINVAL;
+		break;
+
+	case CEC_IOC_GET_BOOT_REASON:
+		tmp = cec_dev->wakeup_reason;
+		CEC_ERR("Boot reason:%#x\n", (unsigned int)tmp);
+		if (copy_to_user(argp, &tmp, _IOC_SIZE(cmd)))
+			return -EINVAL;
+		break;
+
 	default:
+		CEC_ERR("error ioctrl\n");
 		break;
 	}
 	mutex_unlock(&cec_dev->cec_ioctl_mutex);
@@ -2431,7 +2528,7 @@ static int aml_cec_probe(struct platform_device *pdev)
 	struct device_node *node = pdev->dev.of_node;
 	int irq_idx = 0, r;
 	const char *irq_name = NULL;
-	struct pinctrl *p;
+	struct pinctrl *pin;
 	struct vendor_info_data *vend;
 	struct resource *res;
 	resource_size_t *base;
@@ -2439,16 +2536,16 @@ static int aml_cec_probe(struct platform_device *pdev)
 
 	cec_dev = devm_kzalloc(&pdev->dev, sizeof(struct ao_cec_dev),
 			GFP_KERNEL);
-	if (!cec_dev) {
+	if (IS_ERR(cec_dev)) {
 		CEC_ERR("device malloc err!\n");
 		ret = -ENOMEM;
 		goto tag_cec_devm_err;
 	}
-	CEC_ERR("cec driver date:%s\n", CEC_DRIVER_VERSION);
 	cec_dev->dev_type = DEV_TYPE_PLAYBACK;
 	cec_dev->dbg_dev  = &pdev->dev;
 	cec_dev->tx_dev   = get_hdmitx_device();
 	cec_dev->cpu_type = get_cpu_type();
+	cec_dev->node = pdev->dev.of_node;
 	phy_addr_test = 0;
 
 	/* cdev registe */
@@ -2479,9 +2576,10 @@ static int aml_cec_probe(struct platform_device *pdev)
 
 	/*get compatible matched device, to get chip related data*/
 	of_id = of_match_device(aml_cec_dt_match, &pdev->dev);
-	if (!of_id)
+	if (of_id != NULL)
+		cec_dev->plat_data = (struct cec_platform_data_s *)of_id->data;
+	else
 		CEC_ERR("unable to get matched device\n");
-	cec_dev->plat_data = (struct cec_platform_data_s *)of_id->data;
 
 	cec_dev->cec_info.open_count.counter = 0;
 	init_completion(&cec_dev->rx_ok);
@@ -2526,18 +2624,40 @@ static int aml_cec_probe(struct platform_device *pdev)
 		ee_cec = 1;
 	else
 		ee_cec = 0;
-	CEC_INFO("using EE cec:%d\n", ee_cec);
+	CEC_ERR("using cec:%d\n", ee_cec);
 	/* pinmux set */
 	if (of_get_property(node, "pinctrl-names", NULL)) {
-		r = of_property_read_string(node,
-					    "pinctrl-names",
-					    &cec_dev->pin_name);
-		if ((!r) && strcmp(cec_dev->pin_name, "default")) {
-			CEC_INFO("%s pin name:%s\n", __func__,
-			 cec_dev->pin_name);
-			p = devm_pinctrl_get_select(&pdev->dev,
-						    cec_dev->pin_name);
+		pin = devm_pinctrl_get(&pdev->dev);
+		/*get sleep state*/
+		cec_dev->dbg_dev->pins->sleep_state =
+			pinctrl_lookup_state(pin, "cec_pin_sleep");
+		if (IS_ERR(cec_dev->dbg_dev->pins->sleep_state))
+			CEC_ERR("get sleep state error!\n");
+		/*get active state*/
+		if (ee_cec) {
+			cec_dev->dbg_dev->pins->default_state =
+				pinctrl_lookup_state(pin, "hdmitx_aocecb");
+			if (IS_ERR(cec_dev->dbg_dev->pins->default_state)) {
+				CEC_ERR("get aocecb error!\n");
+				cec_dev->dbg_dev->pins->default_state =
+					pinctrl_lookup_state(pin, "default");
+				if (IS_ERR(
+					cec_dev->dbg_dev->pins->default_state))
+					CEC_ERR("get default error0\n");
+				CEC_ERR("use default cec\n");
+				/*force use default*/
+				ee_cec = 0;
+			}
+		} else {
+			cec_dev->dbg_dev->pins->default_state =
+				pinctrl_lookup_state(pin, "default");
+			if (IS_ERR(cec_dev->dbg_dev->pins->default_state))
+				CEC_ERR("get default error1!\n");
 		}
+		/*select pin state*/
+		ret = pinctrl_pm_select_default_state(&pdev->dev);
+		if (ret > 0)
+			CEC_ERR("select state error:0x%x\n", ret);
 	}
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -2609,22 +2729,34 @@ static int aml_cec_probe(struct platform_device *pdev)
 	if (r) {
 		/* default set to 2.0 */
 		CEC_INFO("not find cec_version\n");
-		cec_dev->cec_info.cec_version = CEC_VERSION_20;
+		cec_dev->cec_info.cec_version = CEC_VERSION_14A;
 	}
 
 	/* irq set */
 	cec_irq_enable(false);
-	irq_idx = of_irq_get(node, 0);
+	if (of_irq_count(node) > 1) {
+		if (ee_cec)
+			irq_idx = of_irq_get(node, 0);
+		else
+			irq_idx = of_irq_get(node, 1);
+	} else {
+		irq_idx = of_irq_get(node, 0);
+	}
 	cec_dev->irq_cec = irq_idx;
+	CEC_ERR("irq cnt:%d,cur no:%d\n", of_irq_count(node), irq_idx);
 	if (of_get_property(node, "interrupt-names", NULL)) {
 		r = of_property_read_string(node, "interrupt-names", &irq_name);
 		if (!r && !ee_cec) {
 			r = request_irq(irq_idx, &cec_isr_handler, IRQF_SHARED,
 					irq_name, (void *)cec_dev);
+			if (r < 0)
+				CEC_INFO("aocec irq request fail\n");
 		}
 		if (!r && ee_cec) {
 			r = request_irq(irq_idx, &cecrx_isr, IRQF_SHARED,
 					irq_name, (void *)cec_dev);
+			if (r < 0)
+				CEC_INFO("cecb irq request fail\n");
 		}
 	}
 #endif
@@ -2651,10 +2783,12 @@ static int aml_cec_probe(struct platform_device *pdev)
 	/* for init */
 	cec_pre_init();
 	queue_delayed_work(cec_dev->cec_thread, &cec_dev->cec_work, 0);
-
+	CEC_ERR("cec driver date:%s\n", CEC_DRIVER_VERSION);
+	CEC_ERR("boot:%#x;%#x\n", *((unsigned int *)&cec_dev->wakup_data),
+						cec_dev->wakeup_reason);
 	CEC_ERR("%s success end\n", __func__);
-
 	return 0;
+
 tag_cec_msg_alloc_err:
 		input_free_device(cec_dev->cec_info.remote_cec_dev);
 tag_cec_alloc_input_err:
@@ -2711,15 +2845,27 @@ static void aml_cec_pm_complete(struct device *dev)
 
 static int aml_cec_suspend_noirq(struct device *dev)
 {
+	int ret = 0;
+
+	CEC_INFO("cec suspend noirq\n");
+	if (!IS_ERR(cec_dev->dbg_dev->pins->sleep_state))
+		ret = pinctrl_pm_select_sleep_state(cec_dev->dbg_dev);
+	else
+		CEC_ERR("pinctrl sleep_state error\n");
 	return 0;
 }
 
 static int aml_cec_resume_noirq(struct device *dev)
 {
+	int ret = 0;
+
 	CEC_INFO("cec resume noirq!\n");
 	cec_dev->cec_info.power_status = TRANS_STANDBY_TO_ON;
 	cec_dev->cec_suspend = CEC_POWER_RESUME;
-
+	if (!IS_ERR(cec_dev->dbg_dev->pins->default_state))
+		ret = pinctrl_pm_select_default_state(cec_dev->dbg_dev);
+	else
+		CEC_ERR("pinctrl default_state error\n");
 	return 0;
 }
 

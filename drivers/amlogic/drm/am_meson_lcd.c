@@ -271,6 +271,20 @@ static void am_lcd_encoder_enable(struct drm_encoder *encoder)
 	mutex_lock(&lcd->lcd_drv->power_mutex);
 	aml_lcd_notifier_call_chain(LCD_EVENT_PREPARE, NULL);
 	aml_lcd_notifier_call_chain(LCD_EVENT_ENABLE, NULL);
+
+	lcd->lcd_drv->lcd_config->retry_enable_cnt = 0;
+	while (lcd->lcd_drv->lcd_config->retry_enable_flag) {
+		if (lcd->lcd_drv->lcd_config->retry_enable_cnt++ >=
+			LCD_ENABLE_RETRY_MAX)
+			break;
+		pr_info("am_drm_lcd: retry enable...%d\n",
+			lcd->lcd_drv->lcd_config->retry_enable_cnt);
+		aml_lcd_notifier_call_chain(LCD_EVENT_IF_POWER_OFF, NULL);
+		msleep(1000);
+		aml_lcd_notifier_call_chain(LCD_EVENT_IF_POWER_ON, NULL);
+	}
+	lcd->lcd_drv->lcd_config->retry_enable_cnt = 0;
+
 	mutex_unlock(&lcd->lcd_drv->power_mutex);
 	vout_notifier_call_chain(VOUT_EVENT_MODE_CHANGE, &vmode);
 	pr_info("am_drm_lcd: %s %d\n", __func__, __LINE__);

@@ -33,7 +33,7 @@
 #define MESON_PARM_APPLICABLE(p)		(!!((p)->width))
 
 #define PNAME(x) \
-static const char *x[] __initconst
+static const char *x[]
 
 struct parm {
 	u16	reg_off;
@@ -286,4 +286,5 @@ void meson_g12a_media_init(void);
 void meson_g12a_gpu_init(void);
 void meson_g12a_misc_init(void);
 
+extern int clk_numbers;
 #endif /* __CLKC_H */

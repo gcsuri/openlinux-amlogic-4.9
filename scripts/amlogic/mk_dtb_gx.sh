@@ -4,6 +4,8 @@ export CROSS_COMPILE=/opt/gcc-linaro-6.3.1-2017.02-x86_64_aarch64-linux-gnu/bin/
 
 make ARCH=arm64 gxm_q200_2g.dtb || echo "Compile dtb Fail !!"
 
+make ARCH=arm64 gxm_q201_2g.dtb || echo "Compile dtb Fail !!"
+
 make ARCH=arm64 gxm_skt.dtb || echo "Compile dtb Fail !!"
 
 make ARCH=arm64 gxl_p212_2g.dtb || echo "Compile dtb Fail !!"
@@ -30,4 +32,10 @@ make ARCH=arm64 axg_s420_v03.dtb || echo "Compile dtb Fail !!"
 
 make ARCH=arm64 g12a_pxp.dtb || echo "Compile dtb Fail!!"
 
-make ARCH=arm64 g12a_skt.dtb || echo "Compile dtb Fail!!"
+make ARCH=arm64 g12a_s905d2_skt.dtb || echo "Compile dtb Fail!!"
+
+make ARCH=arm64 g12b_pxp.dtb || echo "Compile dtb Fail!!"
+
+make ARCH=arm64 g12b_a311d_skt.dtb || echo "Compile dtb Fail!!"
+
+make ARCH=arm64 g12b_a311d_w400.dtb || echo "Compile dtb Fail!!"

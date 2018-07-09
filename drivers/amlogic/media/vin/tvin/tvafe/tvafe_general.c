@@ -576,6 +576,11 @@ int adc_set_pll_cntl(bool on, unsigned int module_sel, void *pDtvPara)
 				__func__, adc_pll_chg);
 			break;
 		}
+		if (adc_pll_chg & ADC_EN_ATV_DEMOD) {
+			tvafe_pr_info("%s:ADEMOD ATV had done!:%d\n",
+				__func__, adc_pll_chg);
+			break;
+		}
 		mutex_lock(&pll_mutex);
 		do {
 			if (tvafe_cpu_type() == CPU_TYPE_TXL ||
@@ -875,8 +880,13 @@ void tvafe_set_apb_bus_err_ctrl(void)
  */
 static void tvafe_reset_module(void)
 {
+	pr_info("tvafe_reset_module.\n");
 	W_APB_BIT(TVFE_RST_CTRL, 1, ALL_CLK_RST_BIT, ALL_CLK_RST_WID);
 	W_APB_BIT(TVFE_RST_CTRL, 0, ALL_CLK_RST_BIT, ALL_CLK_RST_WID);
+	/*reset vdin asynchronous fifo*/
+	/*for greenscreen on repeatly power on/off*/
+	W_APB_BIT(TVFE_RST_CTRL, 1, SAMPLE_OUT_RST_BIT, SAMPLE_OUT_RST_WID);
+	W_APB_BIT(TVFE_RST_CTRL, 0, SAMPLE_OUT_RST_BIT, SAMPLE_OUT_RST_WID);
 }
 
 /*

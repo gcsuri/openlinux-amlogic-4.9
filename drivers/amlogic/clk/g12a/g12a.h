@@ -35,6 +35,7 @@
 
 #define HHI_PCIE_PLL_CNTL0		0x98 /* 0x26 offset in data sheet */
 #define HHI_PCIE_PLL_CNTL1		0x9c /* 0x27 offset in data sheet */
+#define HHI_XTAL_DIVN_CNTL		0xbc /* 0x2f offset in data sheet */
 //#define HHI_PCIE_PLL_CNTL6	0xf0 /* 0x3c offset in data sheet */
 
 #define HHI_HIFI_PLL_CNTL0		0xD8 /* 0x36 offset in data sheet */
@@ -44,12 +45,8 @@
 #define HHI_GCLK_MPEG2			0x148 /* 0x52 offset in data sheet */
 #define HHI_GCLK_OTHER			0x150 /* 0x54 offset in data sheet */
 
-#if 0
-#define HHI_GCLK_AO			0x154 /* 0x55 offset in data sheet */
+#define HHI_APICALGDC_CNTL		0x168 /* 0x5a offset in data sheet */
 
-#define HHI_VID_CLK_DIV		0x164 /* 0x59 offset in data sheet */
-#define HHI_SPICC_HCLK_CNTL 0x168 /* 0x5a offset in data sheet */
-#endif
 #define HHI_MPEG_CLK_CNTL       0x174 /* 0x5d offset in data sheet */
 #define HHI_AUD_CLK_CNTL        0x178 /* 0x5e offset in data sheet */
 #define HHI_VID_CLK_CNTL        0x17c /* 0x5f offset in data sheet */
@@ -61,7 +58,10 @@
 #define HHI_VPU_CLKC_CNTL		0x1b4 /* 0x6d offset in data sheet */
 #define HHI_VPU_CLK_CNTL		0x1bC /* 0x6f offset in data sheet */
 
-#define HHI_HDMI_CLK_CNTL		0x1CC /* 0x73 offset in data sheet */
+#define HHI_MIPI_ISP_CLK_CNTL   0x1c0 /* 0x70 offset in data sheet */
+
+#define HHI_VIPNANOQ_CLK_CNTL   0x1c8 /* 0x72 offset in data sheet */
+#define HHI_HDMI_CLK_CNTL       0x1CC /* 0x73 offset in data sheet */
 
 #define HHI_VDEC_CLK_CNTL		0x1E0 /* 0x78 offset in data sheet */
 #define HHI_VDEC2_CLK_CNTL		0x1E4 /* 0x79 offset in data sheet */
@@ -70,6 +70,7 @@
 #define HHI_HDCP22_CLK_CNTL		0x1F0 /* 0x7c offset in data sheet */
 #define HHI_VAPBCLK_CNTL		0x1F4 /* 0x7d offset in data sheet */
 
+#define HHI_SYS_CPUB_CLK_CNTL	0x208 /* 0x82 offset in data sheet */
 #define HHI_VPU_CLKB_CNTL		0x20C /* 0x83 offset in data sheet */
 #define HHI_GEN_CLK_CNTL		0x228 /* 0x8a offset in data sheet */
 
@@ -105,6 +106,17 @@
 #define HHI_SYS_PLL_CNTL5		0x308 /* 0xc2 offset in data sheet */
 #define HHI_SYS_PLL_CNTL6		0x30c /* 0xc3 offset in data sheet */
 
+/* For G12B only */
+#define HHI_MIPI_CSI_PHY_CLK_CNTL 0x340 /* 0xd0 offset in data sheet */
+#define HHI_SYS1_PLL_CNTL0        0x380 /* 0xe0 offset in data sheet */
+#define HHI_SYS1_PLL_CNTL1        0x384 /* 0xe1 offset in data sheet */
+#define HHI_SYS1_PLL_CNTL2        0x388 /* 0xe2 offset in data sheet */
+#define HHI_SYS1_PLL_CNTL3        0x38c /* 0xe3 offset in data sheet */
+#define HHI_SYS1_PLL_CNTL4        0x390 /* 0xe4 offset in data sheet */
+#define HHI_SYS1_PLL_CNTL5        0x394 /* 0xe5 offset in data sheet */
+#define HHI_SYS1_PLL_CNTL6        0x398 /* 0xe6 offset in data sheet */
+/*****************/
+
 #define HHI_SPICC_CLK_CNTL      0x3dc /* 0xf7 offset in data sheet */
 /* AO registers*/
 #define AO_RTI_PWR_CNTL_REG0 0x10 /* 0x4 offset in data sheet */
@@ -137,6 +149,8 @@ static const struct pll_rate_table g12a_pll_rate_table[] = {
 	PLL_RATE(1704000000, 142, 1, 1), /*DCO=3408M*/
 	PLL_RATE(1800000000, 150, 1, 1), /*DCO=3600M*/
 	PLL_RATE(1896000000, 158, 1, 1), /*DCO=3792M*/
+	PLL_RATE(1908000000, 159, 1, 1), /*DCO=3816M*/
+	PLL_RATE(1920000000, 160, 1, 1), /*DCO=3840M*/
 	PLL_RATE(2016000000, 168, 1, 1), /*DCO=4032M*/
 	PLL_RATE(2100000000, 175, 1, 1), /*DCO=4200M*/
 	PLL_RATE(2196000000, 183, 1, 1), /*DCO=4392M*/

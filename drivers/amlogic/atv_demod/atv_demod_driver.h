@@ -14,25 +14,10 @@
 #ifndef __ATV_DEMOD_DRIVER_H__
 #define __ATV_DEMOD_DRIVER_H__
 
-extern int atvdemod_debug_en;
 
 #include <media/v4l2-device.h>
 #include "drivers/media/dvb-core/dvb_frontend.h"
 #include "atv_demod_v4l2.h"
-
-enum aml_tuner_type_t {
-	AM_TUNER_SI2176 = 1,
-	AM_TUNER_SI2196 = 2,
-	AM_TUNER_FQ1216 = 3,
-	AM_TUNER_HTM = 4,
-	AM_TUNER_CTC703 = 5,
-	AM_TUNER_SI2177 = 6,
-	AM_TUNER_R840 = 7,
-	AM_TUNER_SI2157 = 8,
-	AM_TUNER_SI2151 = 9,
-	AM_TUNER_MXL661 = 10,
-	AM_TUNER_MXL608 = 11
-};
 
 struct aml_atvdemod_parameters {
 
@@ -51,7 +36,7 @@ struct aml_atvdemod_parameters {
 
 struct aml_atvdemod_device {
 	char *name;
-	struct class cls;
+	struct class *cls;
 	struct device *dev;
 
 	unsigned int tuner_id;
@@ -62,18 +47,21 @@ struct aml_atvdemod_device {
 	unsigned int if_freq;
 	unsigned int if_inv;
 	u64 std;
+	unsigned int audmode;
 
 	int fre_offset;
 	struct pinctrl *pin;
 	const char *pin_name;
 
-	struct v4l2_adapter v4l2_ad;
 	struct v4l2_frontend v4l2_fe;
+	bool analog_attached;
+	bool tuner_attached;
 
 	void __iomem *demod_reg_base;
 	void __iomem *audio_reg_base;
 	void __iomem *hiu_reg_base;
 	void __iomem *periphs_reg_base;
+	void __iomem *audio_demod_reg_base;
 
 	unsigned int reg_23cf; /* IIR filter */
 	int btsc_sap_mode; /*0: off 1:monitor 2:auto */
@@ -97,5 +85,7 @@ struct aml_atvdemod_device {
 };
 
 extern struct aml_atvdemod_device *amlatvdemod_devp;
+
+extern int aml_attach_demod_tuner(struct aml_atvdemod_device *dev);
 
 #endif /* __ATV_DEMOD_DRIVER_H__ */

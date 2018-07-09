@@ -106,6 +106,10 @@ static int vdin_ctl_dbg;
 module_param(vdin_ctl_dbg, int, 0664);
 MODULE_PARM_DESC(vdin_ctl_dbg, "vdin_ctl_dbg");
 
+/*bit0/1:game mode enable for vdin0/1*/
+unsigned int game_mode;
+module_param(game_mode, uint, 0664);
+MODULE_PARM_DESC(game_mode, "game_mode");
 static unsigned int vpu_reg_27af = 0x3;
 
 /***************************Local defines**********************************/
@@ -578,7 +582,7 @@ static void vdin_set_meas_mux(unsigned int offset, enum tvin_port_e port_,
 			(bt_path == BT_PATH_GPIO_B))
 			meas_mux = MEAS_MUX_656_B;
 		else if ((is_meson_gxl_cpu() || is_meson_gxm_cpu() ||
-			is_meson_g12a_cpu()) &&
+			is_meson_g12a_cpu() || is_meson_g12b_cpu()) &&
 			(bt_path == BT_PATH_GPIO))
 			meas_mux = MEAS_MUX_656;
 		else
@@ -689,7 +693,7 @@ void vdin_set_top(unsigned int offset,
 			wr_bits(offset, VDIN_ASFIFO_CTRL3, 0xe4,
 				VDI9_ASFIFO_CTRL_BIT, VDI9_ASFIFO_CTRL_WID);
 		} else if ((is_meson_gxm_cpu() || is_meson_gxl_cpu() ||
-			is_meson_g12a_cpu()) &&
+			is_meson_g12a_cpu() || is_meson_g12b_cpu()) &&
 			(bt_path == BT_PATH_GPIO)) {
 			vdin_mux = VDIN_MUX_656;
 			wr_bits(offset, VDIN_ASFIFO_CTRL0, 0xe4,
@@ -904,6 +908,16 @@ void vdin_set_cutwin(struct vdin_dev_s *devp)
 	}
 
 }
+
+/*adjust the brightness for txhd hardware snow*/
+void vdin_adjust_tvafesnow_brightness(void)
+{
+	wr(0, VDIN_MATRIX_CTRL, 0x7);
+	wr(0, VDIN_MATRIX_OFFSET0_1, 0x200);
+	wr(0, VDIN_MATRIX_OFFSET2, 0x200);
+	wr(0, VDIN_MATRIX_COEF00_01, 0x6000000);
+}
+EXPORT_SYMBOL(vdin_adjust_tvafesnow_brightness);
 
 void vdin_set_config(struct vdin_dev_s *devp)
 {
@@ -1474,7 +1488,7 @@ void vdin_set_matrix(struct vdin_dev_s *devp)
 		 */
 		wr_bits(offset, VDIN_MATRIX_CTRL, 0,
 				VDIN_MATRIX1_EN_BIT, VDIN_MATRIX1_EN_WID);
-		if (is_meson_g12a_cpu())
+		if (is_meson_g12a_cpu() || is_meson_g12b_cpu())
 			vdin_set_color_matrix0_g12a(devp->addr_offset,
 				devp->fmt_info_p,
 				devp->format_convert,
@@ -1496,6 +1510,8 @@ void vdin_set_matrix(struct vdin_dev_s *devp)
 			wr_bits(offset, VDIN_MATRIX_CTRL, 0,
 				VDIN_MATRIX_EN_BIT, VDIN_MATRIX_EN_WID);
 #endif
+		wr_bits(offset, VDIN_MATRIX_CTRL, 3,
+			VDIN_PROBE_SEL_BIT, VDIN_PROBE_SEL_WID);
 	} else {
 		format_convert_matrix0 = vdin_get_format_convert_matrix0(devp);
 		format_convert_matrix1 = vdin_get_format_convert_matrix1(devp);
@@ -1505,7 +1521,7 @@ void vdin_set_matrix(struct vdin_dev_s *devp)
 				devp->prop.color_fmt_range,
 				devp->prop.vdin_hdr_Flag,
 				devp->color_range_mode);
-		if (is_meson_g12a_cpu())
+		if (is_meson_g12a_cpu() || is_meson_g12b_cpu())
 			vdin_set_color_matrix0_g12a(devp->addr_offset,
 				devp->fmt_info_p,
 				devp->format_convert,
@@ -1540,7 +1556,7 @@ void vdin_set_matrixs(struct vdin_dev_s *devp, unsigned char id,
 {
 	switch (id) {
 	case 0:
-		if (is_meson_g12a_cpu())
+		if (is_meson_g12a_cpu() || is_meson_g12b_cpu())
 			vdin_set_color_matrix0_g12a(devp->addr_offset,
 				devp->fmt_info_p,
 				devp->format_convert,
@@ -1590,7 +1606,7 @@ void vdin_set_prob_xy(unsigned int offset,
 			devp->prop.color_fmt_range,
 			devp->prop.vdin_hdr_Flag,
 			devp->color_range_mode);
-	if (is_meson_g12a_cpu())
+	if (is_meson_g12a_cpu() || is_meson_g12b_cpu())
 		vdin_set_color_matrix0_g12a(devp->addr_offset,
 			devp->fmt_info_p,
 			devp->format_convert,
@@ -1813,7 +1829,7 @@ static inline void vdin_set_wr_ctrl(struct vdin_dev_s *devp,
 	/* win_ve */
 	wr_bits(offset, VDIN_WR_V_START_END, (v - 1), WR_VEND_BIT, WR_VEND_WID);
 	/* hconv_mode */
-	wr_bits(offset, VDIN_WR_CTRL, 0, HCONV_MODE_BIT, HCONV_MODE_WID);
+	wr_bits(offset, VDIN_WR_CTRL, 2, HCONV_MODE_BIT, HCONV_MODE_WID);
 	/* vconv_mode */
 	wr_bits(offset, VDIN_WR_CTRL, 0, VCONV_MODE_BIT, VCONV_MODE_WID);
 	if (write_format444 == 2) {
@@ -1912,6 +1928,7 @@ void vdin_set_wr_ctrl_vsync(struct vdin_dev_s *devp,
 	} else if (write_format444 == 1) {
 		vconv_mode = 3;
 	} else {
+		hconv_mode = 2;
 		swap_cbcr = 0;
 	}
 #ifdef CONFIG_AML_RDMA
@@ -2010,7 +2027,7 @@ void vdin_set_canvas_id(struct vdin_dev_s *devp, unsigned int rdma_enable,
 {
 #ifdef CONFIG_AML_RDMA
 	if (rdma_enable) {
-		if (is_meson_g12a_cpu()) {
+		if (is_meson_g12a_cpu() || is_meson_g12b_cpu()) {
 			rdma_write_reg_bits(devp->rdma_handle,
 				VDIN_COM_CTRL0+devp->addr_offset, 1,
 				VDIN_FORCEGOLINE_EN_BIT, 1);
@@ -2189,7 +2206,7 @@ static void vdin_set_ldim_max_init(unsigned int offset,
 	wr_bits(offset, VDIN_HIST_CTRL, 1, 8, 1);
 }
 #endif
-
+static unsigned int vdin_luma_max;
 void vdin_set_vframe_prop_info(struct vframe_s *vf,
 		struct vdin_dev_s *devp)
 {
@@ -2388,6 +2405,14 @@ void vdin_set_vframe_prop_info(struct vframe_s *vf,
 	/* fetch meas info - For M2 or further chips only, not for M1 chip */
 	vf->prop.meas.vs_stamp = devp->stamp;
 	vf->prop.meas.vs_cycle = devp->cycle;
+	if ((vdin_ctl_dbg & (1 << 8)) &&
+		(vdin_luma_max != vf->prop.hist.luma_max)) {
+		vf->ready_clock_hist[0] = sched_clock();
+		pr_info("vdin write done %lld us. lum_max(0x%x-->0x%x)\n",
+			vf->ready_clock_hist[0]/1000,
+			vdin_luma_max, vf->prop.hist.luma_max);
+		vdin_luma_max = vf->prop.hist.luma_max;
+	}
 #if 0
 /*#ifdef CONFIG_AML_LOCAL_DIMMING*/
 	/* get ldim max */
@@ -2825,15 +2850,15 @@ unsigned int vdin_get_field_type(unsigned int offset)
 {
 	return rd_bits(offset, VDIN_COM_STATUS0, 0, 1);
 }
-
-int vdin_vsync_reset_mif(int index)
+static unsigned int vdin_reset_flag;
+inline int vdin_vsync_reset_mif(int index)
 {
 	int i;
-#if 0
 	int start_line = aml_read_vcbus(VDIN_LCNT_STATUS) & 0xfff;
-#endif
-	if (!enable_reset)
+
+	if (!enable_reset || vdin_reset_flag || (start_line > 0))
 		return 0;
+	vdin_reset_flag = 1;
 	if (index == 0) {
 		W_VCBUS_BIT(VDIN_WR_CTRL, 0, VDIN0_VCP_WR_EN_BIT,
 			VDIN0_VCP_WR_EN_WID); /* vdin->vdin mif wr en */
@@ -2902,6 +2927,7 @@ int vdin_vsync_reset_mif(int index)
 		W_VCBUS_BIT(VDIN1_WR_CTRL2, 0,
 			VDIN1_VCP_WR_EN_BIT, VDIN1_VCP_WR_EN_WID);
 	}
+	vdin_reset_flag = 0;
 #if 0 /* TODO: if start or end line > 0, should drop this frame! */
 	if ((aml_read_vcbus(VDIN_LCNT_STATUS) & 0xfff) > 0) {
 		pr_info("============== !!! line counter = %d -> %d !!!\n",
@@ -3760,7 +3786,7 @@ int vdin_event_cb(int type, void *data, void *op_arg)
 		req->low_latency = 0;
 		if (req->bot_flag)
 			index = (req->vf->index >> 8) & 0xff;
-		if (index != 0xff && index >= 0
+		if (index != 0xff
 			&& index < p->size
 			&& p->dv_buf[index]) {
 			req->aux_buf = p->dv_buf[index];
@@ -3782,15 +3808,18 @@ int vdin_event_cb(int type, void *data, void *op_arg)
 		}
 		index_disp = req->vf->index_disp & 0xff;
 		if (index_disp >= VFRAME_DISP_MAX_NUM) {
-			if (vdin_ctl_dbg)
+			if (vdin_ctl_dbg&(1<<2))
 				pr_info("%s:req->vf->index_disp(%d) is overflow!\n",
 					__func__, index_disp);
 			return -1;
 		}
-		req->disp_mode = p->disp_mode[index_disp];
+		if (game_mode)
+			req->disp_mode = VFRAME_DISP_MODE_NULL;
+		else
+			req->disp_mode = p->disp_mode[index_disp];
 		if ((req->req_mode == 1) && (p->skip_vf_num))
 			p->disp_mode[index_disp] = VFRAME_DISP_MODE_UNKNOWN;
-		if (vdin_ctl_dbg)
+		if (vdin_ctl_dbg&(1<<1))
 			pr_info("%s(type 0x%x vf index 0x%x)=>disp_mode %d,req_mode:%d\n",
 				__func__, type, index_disp, req->disp_mode,
 				req->req_mode);
@@ -3907,6 +3936,16 @@ void vdin_set_drm_data(struct vdin_dev_s *devp,
 				vf->signal_type = ((9 << 16) |
 					(vf->signal_type & (~0xFF0000)));
 				vf->signal_type = ((16 << 8) |
+					(vf->signal_type & (~0xFF00)));
+				vf->signal_type = ((9 << 0) |
+					(vf->signal_type & (~0xFF)));
+			} else if (devp->prop.hdr_info.hdr_data.eotf ==
+					EOTF_HLG) {
+				vf->signal_type |= (1 << 29);
+				vf->signal_type |= (0 << 25);/*0:limit*/
+				vf->signal_type = ((9 << 16) |
+					(vf->signal_type & (~0xFF0000)));
+				vf->signal_type = ((14 << 8) |
 					(vf->signal_type & (~0xFF00)));
 				vf->signal_type = ((9 << 0) |
 					(vf->signal_type & (~0xFF)));

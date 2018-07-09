@@ -82,6 +82,8 @@ static void tvafe_state(struct tvafe_dev_s *devp)
 	tvafe_pr_info("tvafe_cvd2_s->manual_fmt:0x%x\n", cvd2->manual_fmt);
 	tvafe_pr_info("tvafe_cvd2_s->vd_port:0x%x\n", cvd2->vd_port);
 	tvafe_pr_info("tvafe_cvd2_s->cvd2_init_en:%d\n", cvd2->cvd2_init_en);
+	tvafe_pr_info("tvafe_cvd2_s->nonstd_detect_dis:%d\n",
+		cvd2->nonstd_detect_dis);
 	/* tvin_parm_s->tvin_info_s struct info */
 	tvafe_pr_info("\n!!tvin_parm_s->tvin_info_s struct info:\n");
 	tvafe_pr_info("tvin_info_s->trans_fmt:0x%x\n", tvin_info->trans_fmt);
@@ -178,7 +180,7 @@ static void tvafe_state(struct tvafe_dev_s *devp)
 static void tvafe_parse_param(char *buf_orig, char **parm)
 {
 	char *ps, *token;
-	char delim1[2] = " ";
+	char delim1[3] = " ";
 	char delim2[2] = "\n";
 	unsigned int n = 0;
 
@@ -283,6 +285,38 @@ static ssize_t tvafe_store(struct device *dev,
 			devp->frame_skip_enable);
 	} else if (!strncmp(buff, "state", strlen("state"))) {
 		tvafe_state(devp);
+	} else if (!strncmp(buff, "nonstd_detect_dis",
+		strlen("nonstd_detect_dis"))) {
+		/*patch for Very low probability hanging issue on atv close*/
+		/*only appeared in one project,this for reserved debug*/
+		/*default setting to disable the nonstandard signal detect*/
+		if (kstrtoul(parm[1], 10, &val) < 0) {
+			kfree(buf_orig);
+			return -EINVAL;
+		}
+		if (val) {
+			devp->tvafe.cvd2.nonstd_detect_dis = true;
+			pr_info("[tvafe..]%s:disable nonstd detect\n",
+				__func__);
+		} else {
+			devp->tvafe.cvd2.nonstd_detect_dis = false;
+			pr_info("[tvafe..]%s:enable nonstd detect\n",
+				__func__);
+		}
+	} else if (!strncmp(buff, "rf_ntsc50_en", strlen("rf_ntsc50_en"))) {
+		if (kstrtoul(parm[1], 10, &val) < 0) {
+			kfree(buf_orig);
+			return -EINVAL;
+		}
+		if (val) {
+			tvafe_cvd2_rf_ntsc50_en(true);
+			pr_info("[tvafe..]%s:tvafe_cvd2_rf_ntsc50_en\n",
+				__func__);
+		} else {
+			tvafe_cvd2_rf_ntsc50_en(false);
+			pr_info("[tvafe..]%s:tvafe_cvd2_rf_ntsc50_dis\n",
+				__func__);
+		}
 	} else
 		tvafe_pr_info("[%s]:invaild command.\n", __func__);
 	kfree(buf_orig);
@@ -337,7 +371,7 @@ static ssize_t tvafe_dumpmem_store(struct device *dev,
 	char *buf_orig, *ps, *token;
 	char *parm[6] = {NULL};
 	struct tvafe_dev_s *devp;
-	char delim1[2] = " ";
+	char delim1[3] = " ";
 	char delim2[2] = "\n";
 
 	strcat(delim1, delim2);
@@ -354,7 +388,7 @@ static ssize_t tvafe_dumpmem_store(struct device *dev,
 		if (*token == '\0')
 			continue;
 		parm[n++] = token;
-		}
+	}
 	if (!strncmp(parm[0], "dumpmem", strlen("dumpmem"))) {
 		if (parm[1] != NULL) {
 			struct file *filp = NULL;

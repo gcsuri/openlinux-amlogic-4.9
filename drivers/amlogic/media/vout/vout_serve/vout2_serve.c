@@ -89,6 +89,7 @@ static struct vinfo_s nulldisp_vinfo = {
 	.video_clk         = 148500000,
 	.htotal            = 2200,
 	.vtotal            = 1125,
+	.fr_adj_type       = VOUT_FR_ADJ_NONE,
 	.viu_color_fmt     = COLOR_FMT_RGB444,
 	.viu_mux           = VIU_MUX_MAX,
 	.vout_device       = NULL,
@@ -116,7 +117,7 @@ static enum vmode_e nulldisp_validate_vmode(char *name)
 
 static int nulldisp_vmode_is_supported(enum vmode_e mode)
 {
-	if (nulldisp_vinfo.mode == mode)
+	if (nulldisp_vinfo.mode == (mode & VMODE_MODE_BIT_MASK))
 		return true;
 	return false;
 }

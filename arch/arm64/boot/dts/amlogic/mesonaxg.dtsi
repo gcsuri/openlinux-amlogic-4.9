@@ -184,6 +184,7 @@
 		#address-cells = <2>;
 		#size-cells = <2>;
 		reg = <0x0 0xff634018 0x0 0x4>;
+		quality = /bits/ 16 <1000>;
 	};
 
 	mailbox: mhu@c883c400 {
@@ -259,7 +260,7 @@
 
 	wdt_ee: watchdog@0xffd0f0d0 {
 		compatible = "amlogic, meson-wdt";
-		status = "disabled";
+		status = "okay";
 		default_timeout=<10>;
 		reset_watchdog_method=<1>; /* 0:sysfs,1:kernel */
 		reset_watchdog_time=<2>;
@@ -269,6 +270,11 @@
 		reg = <0x0 0xffd0f0d0 0x0 0x10>;
 		clock-names = "xtal";
 		clocks = <&xtal>;
+	};
+
+	ram-dump {
+		compatible = "amlogic, ram_dump";
+		status = "okay";
 	};
 
 	pinctrl_aobus: pinctrl@ff800014{
@@ -349,6 +355,7 @@
 				#size-cells = <0>;
 				clocks = <&clkc CLKID_I2C>;
 				clock-names = "clk_i2c";
+				clock-frequency = <100000>;
 			};
 
 			/*i2c-B*/
@@ -362,6 +369,7 @@
 				#size-cells = <0>;
 				clocks = <&clkc CLKID_I2C>;
 				clock-names = "clk_i2c";
+				clock-frequency = <100000>;
 			};
 
 			/*i2c-C*/
@@ -375,6 +383,7 @@
 				#size-cells = <0>;
 				clocks = <&clkc CLKID_I2C>;
 				clock-names = "clk_i2c";
+				clock-frequency = <100000>;
 			};
 
 			/*i2c-D*/
@@ -388,6 +397,7 @@
 				#size-cells = <0>;
 				clocks = <&clkc CLKID_I2C>;
 				clock-names = "clk_i2c";
+				clock-frequency = <100000>;
 			};
 		}; /* end of cbus */
 
@@ -417,6 +427,7 @@
 				#size-cells = <0>;
 				clocks = <&clkc CLKID_I2C>;
 				clock-names = "clk_i2c";
+				clock-frequency = <100000>;
 			};
 		};/* end of aobus */
 

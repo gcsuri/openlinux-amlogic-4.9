@@ -35,6 +35,7 @@
 #include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/amlogic/media/frame_provider/tvin/tvin.h>
+#include <linux/arm-smccc.h>
 
 /* Local include */
 #include "hdmi_rx_drv.h"
@@ -46,11 +47,10 @@
 #define SCRAMBLE_SEL 1
 #define HYST_HDMI_TO_DVI 5
 /* must = 0, other agilent source fail */
-#define HYST_DVI_TO_HDMI 0
+#define HYST_DVI_TO_HDMI 1
 #define GCP_GLOBAVMUTE_EN 1 /* ag506 must clear this bit */
 #define EDID_CLK_DIV 9 /* sys clk/(9+1) = 20M */
 #define HDCP_KEY_WR_TRIES		(5)
-#define __asmeq(x, y)  ".ifnc " x "," y " ; .err ; .endif\n\t"
 
 /*------------------------variable define------------------------------*/
 static DEFINE_SPINLOCK(reg_rw_lock);
@@ -76,7 +76,7 @@ bool hdcp_enable = 1;
 int acr_mode;
 int auto_aclk_mute = 2;
 int aud_avmute_en = 1;
-int aud_mute_sel;
+int aud_mute_sel = 2;
 int force_clk_rate;
 int md_ists_en = VIDEO_MODE;
 int pdec_ists_en;/* = AVI_CKS_CHG | DVIDET | DRM_CKS_CHG | DRM_RCV_EN;*/
@@ -87,6 +87,8 @@ int eq_ref_voltage = 0x1ea;
 int hdcp22_on;
 MODULE_PARM_DESC(hdcp22_on, "\n hdcp22_on\n");
 module_param(hdcp22_on, int, 0664);
+
+int aud_ch_map;
 
 /*------------------------variable define end------------------------------*/
 
@@ -483,17 +485,10 @@ unsigned int rx_hdcp22_rd_top(uint32_t addr)
  */
 void sec_top_write(unsigned int *addr, unsigned int value)
 {
-	register long x0 asm("x0") = 0x8200001e;
-	register long x1 asm("x1") = (unsigned long)addr;
-	register long x2 asm("x2") = value;
+	struct arm_smccc_res res;
 
-	asm volatile(
-		__asmeq("%0", "x0")
-		__asmeq("%1", "x1")
-		__asmeq("%2", "x2")
-		"smc #0\n"
-		: : "r"(x0), "r"(x1), "r"(x2)
-	);
+	arm_smccc_smc(0x8200001e, (unsigned long)(uintptr_t)addr,
+					value, 0, 0, 0, 0, 0, &res);
 }
 
 /*
@@ -501,16 +496,12 @@ void sec_top_write(unsigned int *addr, unsigned int value)
  */
 unsigned int sec_top_read(unsigned int *addr)
 {
-	register long x0 asm("x0") = 0x8200001d;
-	register long x1 asm("x1") = (unsigned long)addr;
+	struct arm_smccc_res res;
 
-	asm volatile(
-		__asmeq("%0", "x0")
-		__asmeq("%1", "x1")
-		"smc #0\n"
-		: "+r"(x0) : "r"(x1)
-	);
-	return (unsigned int)(x0&0xffffffff);
+	arm_smccc_smc(0x8200001d, (unsigned long)(uintptr_t)addr,
+					0, 0, 0, 0, 0, 0, &res);
+
+	return (unsigned int)((res.a0)&0xffffffff);
 }
 
 /*
@@ -518,17 +509,10 @@ unsigned int sec_top_read(unsigned int *addr)
  */
 void rx_sec_reg_write(unsigned int *addr, unsigned int value)
 {
-	register long x0 asm("x0") = 0x8200002f;
-	register long x1 asm("x1") = (unsigned long)addr;
-	register long x2 asm("x2") = value;
+	struct arm_smccc_res res;
 
-	asm volatile(
-		__asmeq("%0", "x0")
-		__asmeq("%1", "x1")
-		__asmeq("%2", "x2")
-		"smc #0\n"
-		: : "r"(x0), "r"(x1), "r"(x2)
-	);
+	arm_smccc_smc(0x8200002f, (unsigned long)(uintptr_t)addr,
+				value, 0, 0, 0, 0, 0, &res);
 }
 
 /*
@@ -536,16 +520,12 @@ void rx_sec_reg_write(unsigned int *addr, unsigned int value)
  */
 unsigned int rx_sec_reg_read(unsigned int *addr)
 {
-	register long x0 asm("x0") = 0x8200001f;
-	register long x1 asm("x1") = (unsigned long)addr;
+	struct arm_smccc_res res;
 
-	asm volatile(
-		__asmeq("%0", "x0")
-		__asmeq("%1", "x1")
-		"smc #0\n"
-		: "+r"(x0) : "r"(x1)
-	);
-	return (unsigned int)(x0&0xffffffff);
+	arm_smccc_smc(0x8200001f, (unsigned long)(uintptr_t)addr,
+					0, 0, 0, 0, 0, 0, &res);
+
+	return (unsigned int)((res.a0)&0xffffffff);
 }
 
 /*
@@ -553,14 +533,11 @@ unsigned int rx_sec_reg_read(unsigned int *addr)
  */
 unsigned int rx_sec_set_duk(void)
 {
-	register long x0 asm("x0") = 0x8200002e;
+	struct arm_smccc_res res;
 
-	asm volatile(
-		__asmeq("%0", "x0")
-		"smc #0\n"
-		: "+r"(x0)
-	);
-	return (unsigned int)(x0&0xffffffff);
+	arm_smccc_smc(0x8200002e, 0, 0, 0, 0, 0, 0, 0, &res);
+
+	return (unsigned int)((res.a0)&0xffffffff);
 }
 
 /*
@@ -738,8 +715,10 @@ void rx_get_audinfo(struct aud_info_s *audio_info)
 		hdmirx_rd_bits_dwc(DWC_PDEC_AIF_PB0, SAMPLE_SIZE);
 	audio_info->coding_extension =
 		hdmirx_rd_bits_dwc(DWC_PDEC_AIF_PB0, AIF_DATA_BYTE_3);
-	audio_info->channel_allocation =
+	audio_info->auds_ch_alloc =
 		hdmirx_rd_bits_dwc(DWC_PDEC_AIF_PB0, CH_SPEAK_ALLOC);
+	audio_info->auds_layout =
+		hdmirx_rd_bits_dwc(DWC_PDEC_STS, PD_AUD_LAYOUT);
 
 	audio_info->aud_packet_received =
 			hdmirx_rd_dwc(DWC_PDEC_AUD_STS) &
@@ -759,13 +738,17 @@ void rx_get_audinfo(struct aud_info_s *audio_info)
  */
 void rx_get_audio_status(struct rx_audio_stat_s *aud_sts)
 {
-	if (rx.state == FSM_SIG_READY) {
+	if ((rx.state == FSM_SIG_READY) &&
+		(rx.avmute_skip == 0)) {
 		aud_sts->aud_rcv_flag =
 			(rx.aud_info.aud_packet_received == 0) ? false : true;
 		aud_sts->aud_stb_flag = true;
 		aud_sts->aud_sr = rx.aud_info.real_sr;
 		aud_sts->aud_channel_cnt = rx.aud_info.channel_count;
 		aud_sts->aud_type = rx.aud_info.coding_type;
+		aud_sts->afifo_thres_pass =
+			((hdmirx_rd_dwc(DWC_AUD_FIFO_STS) &
+			THS_PASS_STS) == 0) ? false : true;
 	} else {
 		memset(aud_sts, 0,
 			sizeof(struct rx_audio_stat_s));
@@ -1102,7 +1085,19 @@ void rx_hdcp14_config(const struct hdmi_rx_hdcp *hdcp)
 	unsigned int i = 0;
 	unsigned int k = 0;
 
-	hdmirx_wr_bits_dwc(DWC_HDCP_SETTINGS, HDCP_FAST_MODE, 0);
+	unsigned int data32 = 0;
+	/* I2C_SPIKE_SUPPR */
+	data32 |= 1 << 16;
+	/* FAST_I2C */
+	data32 |= 0 << 12;
+	/* ONE_DOT_ONE */
+	data32 |= 0 << 9;
+	/* FAST_REAUTH */
+	data32 |= 0 << 8;
+	/* DDC_ADDR */
+	data32 |= 0x3a << 1;
+	hdmirx_wr_dwc(DWC_HDCP_SETTINGS, data32);
+	/* hdmirx_wr_bits_dwc(DWC_HDCP_SETTINGS, HDCP_FAST_MODE, 0); */
 	/* Enable hdcp bcaps bit(bit7). In hdcp1.4 spec: Use of
 	 * this bit is reserved, hdcp Receivers not capable of
 	 * supporting HDMI must clear this bit to 0. For YAMAHA
@@ -1440,7 +1435,6 @@ void hdmirx_20_init(void)
 int hdmirx_audio_init(void)
 {
 	/* 0=I2S 2-channel; 1=I2S 4 x 2-channel. */
-	#define RX_8_CHANNEL        1
 	int err = 0;
 	unsigned long data32 = 0;
 
@@ -1489,7 +1483,7 @@ int hdmirx_audio_init(void)
 	data32  = 0;
 	data32 |= 0	<< 8;
 	data32 |= 1	<< 7;
-	data32 |= (RX_8_CHANNEL ? 0x13:0x00) << 2;
+	data32 |= aud_ch_map << 2;
 	data32 |= 1	<< 0;
 	hdmirx_wr_dwc(DWC_AUD_CHEXTR_CTRL, data32);
 
@@ -2042,6 +2036,25 @@ void hdmirx_config_video(void)
 }
 
 /*
+ * hdmirx_config_audio - audio channel map
+ */
+void hdmirx_config_audio(void)
+{
+	/* if audio layout bit = 1, set audio channel map
+	 * according to audio speaker allocation, if layout
+	 * bit = 0, use ch1 & ch2 by default.
+	 */
+	if (rx.aud_info.auds_layout) {
+		hdmirx_wr_bits_dwc(DWC_AUD_CHEXTR_CTRL,
+			AUD_CH_MAP_CFG,
+			rx.aud_info.auds_ch_alloc);
+	} else {
+		hdmirx_wr_bits_dwc(DWC_AUD_CHEXTR_CTRL,
+			AUD_CH_MAP_CFG, 0);
+	}
+}
+
+/*
  * clk_util_clk_msr
  */
 static unsigned int clk_util_clk_msr(unsigned int clk_mux)
@@ -2137,6 +2150,42 @@ bool is_wr_only_reg(uint32_t addr)
 
 void rx_debug_load22key(void)
 {
+	int ret = 0;
+	int wait_kill_done_cnt = 0;
+
+	ret = rx_sec_set_duk();
+	rx_pr("22 = %d\n", ret);
+	if (ret == 1) {
+		rx_pr("load 2.2 key\n");
+		sm_pause = 1;
+		rx_set_hpd(0);
+		hdcp22_on = 1;
+		hdcp22_kill_esm = 1;
+		while (wait_kill_done_cnt++ < 10) {
+			if (!hdcp22_kill_esm)
+				break;
+			msleep(20);
+		}
+		hdcp22_kill_esm = 0;
+		extcon_set_state_sync(rx.rx_excton_rx22,
+			EXTCON_DISP_HDMI, 0);
+		hdmirx_wr_dwc(DWC_HDCP22_CONTROL, 0x0);
+		hdmirx_hdcp22_esm_rst();
+		mdelay(110);
+		rx_is_hdcp22_support();
+		hdmirx_wr_dwc(DWC_HDCP22_CONTROL,
+					0x1000);
+		rx_hdcp22_wr_top(TOP_SKP_CNTL_STAT, 0x1);
+		hdcp22_clk_en(1);
+		extcon_set_state_sync(rx.rx_excton_rx22,
+			EXTCON_DISP_HDMI, 1);
+		mdelay(100);
+		hdmirx_hw_config();
+		hpd_to_esm = 1;
+		/* mdelay(900); */
+		rx_set_hpd(1);
+		sm_pause = 0;
+	}
 }
 
 void rx_debug_loadkey(void)

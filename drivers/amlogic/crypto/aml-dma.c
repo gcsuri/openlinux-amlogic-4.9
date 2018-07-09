@@ -42,6 +42,11 @@
 #include <linux/of_platform.h>
 #include "aml-crypto-dma.h"
 
+int debug = 2;
+#ifdef CRYPTO_DEBUG
+module_param(debug, int, 0644);
+#endif
+
 void __iomem *cryptoreg;
 
 struct meson_dma_data {
@@ -121,6 +126,7 @@ static int aml_dma_probe(struct platform_device *pdev)
 	return err;
 
 dma_err:
+	kfree(dma_dd);
 	dev_err(dev, "initialization failed.\n");
 
 	return err;

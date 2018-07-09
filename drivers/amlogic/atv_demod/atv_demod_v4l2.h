@@ -14,6 +14,7 @@
 #ifndef __ATV_DEMOD_V4L2_H__
 #define __ATV_DEMOD_V4L2_H__
 
+#include <linux/amlogic/aml_atvdemod.h>
 #include <media/v4l2-device.h>
 #include "drivers/media/dvb-core/dvb_frontend.h"
 
@@ -33,12 +34,18 @@
 	__r; \
 })
 
+#define v4l2_detach(FUNCTION)    symbol_put_addr(FUNCTION)
+
 #else
 
 #define v4l2_attach(FUNCTION, ARGS...) ({ \
 	FUNCTION(ARGS); \
 })
+
+#define v4l2_detach(FUNCTION)    {}
+
 #endif /* CONFIG_MEDIA_ATTACH */
+
 
 #define V4L2_FE_NO_EXIT 0
 #define V4L2_FE_NORMAL_EXIT 1
@@ -63,16 +70,26 @@
 #define V4L2FE_STATE_LOSTLOCK (V4L2FE_STATE_ZIGZAG_FAST |\
 		V4L2FE_STATE_ZIGZAG_SLOW)
 
+#define V4L2_IOCTL_MAX_MSGS 64
+
 #define V4L2_SET_FRONTEND    _IOW('V', 105, struct v4l2_analog_parameters)
 #define V4L2_GET_FRONTEND    _IOR('V', 106, struct v4l2_analog_parameters)
 #define V4L2_GET_EVENT       _IOR('V', 107, struct v4l2_frontend_event)
-#define V4L2_SET_MODE        _IO('V', 108)
+#define V4L2_SET_MODE        _IOW('V', 108, int)
 #define V4L2_READ_STATUS     _IOR('V', 109, enum v4l2_status)
+#define V4L2_SET_PROPERTY    _IOWR('V', 110, struct v4l2_properties)
+#define V4L2_GET_PROPERTY    _IOWR('V', 111, struct v4l2_properties)
 
-/*COLOR MODULATION TYPE*/
-#define V4L2_COLOR_STD_PAL    ((v4l2_std_id) 0x04000000)
-#define V4L2_COLOR_STD_NTSC   ((v4l2_std_id) 0x08000000)
-#define V4L2_COLOR_STD_SECAM  ((v4l2_std_id) 0x10000000)
+#define ANALOG_FLAG_ENABLE_AFC          0x00000001
+#define ANALOG_FLAG_MANUL_SCAN          0x00000011
+
+#define V4L2_UNDEFINED           0
+#define V4L2_TUNE                1
+#define V4L2_SOUND_SYS           2
+#define V4L2_SLOW_SEARCH_MODE    3
+
+
+struct v4l2_frontend;
 
 struct v4l2_analog_parameters {
 	unsigned int frequency;
@@ -94,6 +111,20 @@ enum v4l2_status {
 	V4L2_REINIT      = 0x40, /* frontend was reinitialized, */
 };				/* application is recommended to reset */
 				/* DiSEqC, tone and parameters */
+
+struct v4l2_property {
+	unsigned int cmd;
+	unsigned int data;
+	int result;
+};
+
+struct v4l2_properties {
+	unsigned int num;
+	union {
+		struct v4l2_property *props;
+		__u64 reserved;
+	};
+};
 
 enum v4l2_search {
 	V4L2_SEARCH_SUCCESS = (1 << 0),
@@ -147,16 +178,29 @@ struct v4l2_adapter {
 	unsigned int tuner_id;
 };
 
+struct v4l2_frontend_ops {
+	int (*set_property)(struct v4l2_frontend *fe,
+			struct v4l2_property *tvp);
+	int (*get_property)(struct v4l2_frontend *fe,
+			struct v4l2_property *tvp);
+
+	enum v4l2_search (*search)(struct v4l2_frontend *v4l2_fe);
+};
+
 struct v4l2_frontend {
-	struct v4l2_adapter *v4l2_ad;
+	struct device *dev;
+
+	struct dvb_frontend fe;
+	unsigned int tuner_id;
+	struct i2c_client i2c;
 
 	void *frontend_priv;
 	void *tuner_priv;
-	void *analog_priv;
+	void *analog_demod_priv;
 
 	struct v4l2_analog_parameters params;
 
-	enum v4l2_search (*search)(struct v4l2_frontend *v4l2_fe);
+	struct v4l2_frontend_ops ops;
 };
 
 struct v4l2_atvdemod_device {
@@ -171,14 +215,12 @@ struct v4l2_atvdemod_device {
 
 	struct i2c_client i2c;
 	unsigned int tuner_id;
-
-	enum v4l2_search (*search)(struct v4l2_atvdemod_device *dev);
 };
 
-int v4l2_resister_frontend(struct v4l2_adapter *v4l2_ad,
-		struct v4l2_frontend *v4l2_fe);
+int v4l2_resister_frontend(struct v4l2_frontend *v4l2_fe);
 int v4l2_unresister_frontend(struct v4l2_frontend *v4l2_fe);
 
+void v4l2_frontend_detach(struct v4l2_frontend *v4l2_fe);
 int v4l2_frontend_suspend(struct v4l2_frontend *v4l2_fe);
 int v4l2_frontend_resume(struct v4l2_frontend *v4l2_fe);
 
