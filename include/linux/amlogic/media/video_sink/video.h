@@ -38,6 +38,7 @@ enum {
 };
 
 extern bool pre_scaler_en;
+extern bool super_scaler;
 #define VIDEO_NOTIFY_TRICK_WAIT   0x01
 #define VIDEO_NOTIFY_PROVIDER_GET 0x02
 #define VIDEO_NOTIFY_PROVIDER_PUT 0x04
@@ -263,10 +264,10 @@ int get_video0_frame_info(struct vframe_s *vf);
 
 #define AMVIDEO_UPDATE_OSD_MODE	0x00000001
 
-extern enum vmode_e get_logo_vmode(void);
-
 int query_video_status(int type, int *value);
 int get_video0_frame_info(struct vframe_s *vf);
 int amvideo_notifier_call_chain(unsigned long val, void *v);
 struct device *get_video_device(void);
+extern unsigned int DI_POST_REG_RD(unsigned int addr);
+extern int DI_POST_WR_REG_BITS(u32 adr, u32 val, u32 start, u32 len);
 #endif /* VIDEO_H */

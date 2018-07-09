@@ -328,19 +328,23 @@ static const struct snd_soc_dapm_route T9015S_audio_dapm_routes[] = {
 static int aml_T9015S_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 {
 	struct snd_soc_codec *codec = dai->codec;
+	u32 val = snd_soc_read(codec, AUDIO_CONFIG_BLOCK_ENABLE);
+
+	pr_debug("%s, format:%x, codec = %p\n", __func__, fmt, codec);
 
 	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
 	case SND_SOC_DAIFMT_CBM_CFM:
-		snd_soc_update_bits(codec, AUDIO_CONFIG_BLOCK_ENABLE,
-					I2S_MODE, 1);
+		val |= (0x1 << I2S_MODE);
 		break;
 	case SND_SOC_DAIFMT_CBS_CFS:
-		snd_soc_update_bits(codec, AUDIO_CONFIG_BLOCK_ENABLE,
-					I2S_MODE, 0);
+		val &= ~(0x1 << I2S_MODE);
 		break;
 	default:
 		return -EINVAL;
 	}
+
+	snd_soc_write(codec, AUDIO_CONFIG_BLOCK_ENABLE, val);
+
 	return 0;
 }
 
@@ -447,9 +451,7 @@ static int aml_T9015S_audio_probe(struct snd_soc_codec *codec)
 	if (T9015S_audio == NULL)
 		return -ENOMEM;
 	snd_soc_codec_set_drvdata(codec, T9015S_audio);
-#if 0 /*tmp_mask_for_kernel_4_4*/
-	snd_soc_codec_set_cache_io(codec, 32, 32, SND_SOC_REGMAP);
-#endif
+
 	/*reset audio codec register*/
 	aml_T9015S_audio_reset(codec);
 	aml_T9015S_audio_start_up(codec);

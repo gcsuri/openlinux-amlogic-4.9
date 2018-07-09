@@ -123,6 +123,17 @@ static void mipi_dsi_init_table_print(struct dsi_config_s *dconf, int on_off)
 				pr_info("  0x%02x,%d,\n",
 					dsi_table[i], dsi_table[i+1]);
 			}
+		} else if (dsi_table[i] == 0xf0) {
+			n = (DSI_CMD_SIZE_INDEX + 1) +
+				dsi_table[i+DSI_CMD_SIZE_INDEX];
+			pr_info("  ");
+			for (j = 0; j < n; j++) {
+				if (j == 0)
+					pr_info("0x%02x,", dsi_table[i+j]);
+				else
+					pr_info("%d,", dsi_table[i+j]);
+			}
+			pr_info("\n");
 		} else if ((dsi_table[i] & 0xf) == 0x0) {
 			pr_info("dsi_init_%s wrong data_type: 0x%02x\n",
 				on_off ? "on" : "off", dsi_table[i]);
@@ -154,6 +165,7 @@ static void mipi_dsi_dphy_print_info(struct dsi_config_s *dconf)
 	temp = ((1000000 * 100) / (dconf->bit_rate / 1000)) * 8;
 	pr_info("MIPI DSI DPHY timing (unit: ns)\n"
 		"  UI:                %d.%02d\n"
+		"  LP TESC:           %d\n"
 		"  LP LPX:            %d\n"
 		"  LP TA_SURE:        %d\n"
 		"  LP TA_GO:          %d\n"
@@ -168,8 +180,10 @@ static void mipi_dsi_dphy_print_info(struct dsi_config_s *dconf)
 		"  CLK PREPARE:       %d\n"
 		"  CLK PRE:           %d\n"
 		"  INIT:              %d\n"
-		"  WAKEUP:            %d\n\n",
+		"  WAKEUP:            %d\n"
+		"  state_change:      %d\n\n",
 		(temp / 8 / 100), ((temp / 8) % 100),
+		(temp * dsi_phy_config.lp_tesc / 100),
 		(temp * dsi_phy_config.lp_lpx / 100),
 		(temp * dsi_phy_config.lp_ta_sure / 100),
 		(temp * dsi_phy_config.lp_ta_go / 100),
@@ -184,7 +198,8 @@ static void mipi_dsi_dphy_print_info(struct dsi_config_s *dconf)
 		(temp * dsi_phy_config.clk_prepare / 100),
 		(temp * dsi_phy_config.clk_pre / 100),
 		(temp * dsi_phy_config.init / 100),
-		(temp * dsi_phy_config.wakeup / 100));
+		(temp * dsi_phy_config.wakeup / 100),
+		dsi_phy_config.state_change);
 }
 
 static void mipi_dsi_video_print_info(struct dsi_config_s *dconf)
@@ -211,6 +226,14 @@ static void mipi_dsi_host_print_info(struct lcd_config_s *pconf)
 	esc_clk = dconf->bit_rate / 8 / dsi_phy_config.lp_tesc;
 	factor = dconf->factor_numerator;
 	factor = ((factor * 1000 / dconf->factor_denominator) + 5) / 10;
+
+	if (dconf->check_en) {
+		pr_info("MIPI DSI check state:\n"
+			"  check_reg:             0x%02x\n"
+			"  check_cnt:             %d\n"
+			"  check_state            %d\n\n",
+			dconf->check_reg, dconf->check_cnt, dconf->check_state);
+	}
 
 	pr_info("MIPI DSI Config:\n"
 		"  lane num:              %d\n"
@@ -403,13 +426,30 @@ static void mipi_dcs_set(int trans_type, int req_ack, int tear_en)
  * Check the status of the dphy: phylock and stopstateclklane,
  *  to decide if the DPHY is ready
  */
+#define DPHY_TIMEOUT    200000
 static void check_phy_status(void)
 {
-	while (dsi_host_getb(MIPI_DSI_DWC_PHY_STATUS_OS, BIT_PHY_LOCK, 1) == 0)
+	int i = 0;
+
+	while (dsi_host_getb(MIPI_DSI_DWC_PHY_STATUS_OS,
+		BIT_PHY_LOCK, 1) == 0) {
+		if (i++ >= DPHY_TIMEOUT) {
+			LCDERR("%s: phy_lock timeout\n", __func__);
+			break;
+		}
 		udelay(6);
+	}
+
+	i = 0;
+	udelay(10);
 	while (dsi_host_getb(MIPI_DSI_DWC_PHY_STATUS_OS,
 		BIT_PHY_STOPSTATECLKLANE, 1) == 0) {
-		LCDPR(" Waiting STOP STATE LANE\n");
+		if (i == 0)
+			LCDPR(" Waiting STOP STATE LANE\n");
+		if (i++ >= DPHY_TIMEOUT) {
+			LCDERR("%s: lane_state timeout\n", __func__);
+			break;
+		}
 		udelay(6);
 	}
 }
@@ -555,7 +595,6 @@ static void set_mipi_dsi_host(unsigned int vcid, unsigned int chroma_subsample,
 {
 	unsigned int dpi_data_format, venc_data_width;
 	unsigned int lane_num, vid_mode_type;
-	enum tv_enc_lcd_type_e  output_type;
 	unsigned int temp;
 	struct dsi_config_s *dconf;
 
@@ -564,16 +603,12 @@ static void set_mipi_dsi_host(unsigned int vcid, unsigned int chroma_subsample,
 	dpi_data_format = dconf->dpi_data_format;
 	lane_num        = (unsigned int)(dconf->lane_num);
 	vid_mode_type   = (unsigned int)(dconf->video_mode_type);
-	output_type     = dconf->venc_fmt;
 
 	/* ----------------------------------------------------- */
 	/* Standard Configuration for Video Mode Operation */
 	/* ----------------------------------------------------- */
 	/* 1,    Configure Lane number and phy stop wait time */
-	if ((output_type != TV_ENC_LCD240x160_dsi) &&
-		(output_type != TV_ENC_LCD1920x1200p) &&
-		(output_type != TV_ENC_LCD2560x1600) &&
-		(output_type != TV_ENC_LCD768x1024p)) {
+	if (dsi_phy_config.state_change == 2) {
 		dsi_host_write(MIPI_DSI_DWC_PHY_IF_CFG_OS,
 			(0x28 << BIT_PHY_STOP_WAIT_TIME) |
 			((lane_num-1) << BIT_N_LANES));
@@ -698,24 +733,15 @@ static void set_mipi_dsi_host(unsigned int vcid, unsigned int chroma_subsample,
 	dsi_host_write(MIPI_DSI_DWC_MODE_CFG_OS, operation_mode);
 
 	/* Phy Timer */
-	if ((output_type != TV_ENC_LCD240x160_dsi) &&
-		(output_type != TV_ENC_LCD1920x1200p) &&
-		(output_type != TV_ENC_LCD2560x1600) &&
-		(output_type != TV_ENC_LCD768x1024p)) {
+	if (dsi_phy_config.state_change == 2)
 		dsi_host_write(MIPI_DSI_DWC_PHY_TMR_CFG_OS, 0x03320000);
-	} else {
+	else
 		dsi_host_write(MIPI_DSI_DWC_PHY_TMR_CFG_OS, 0x090f0000);
-	}
 
-	/* Configure DPHY Parameters */
-	if ((output_type != TV_ENC_LCD240x160_dsi) &&
-		(output_type != TV_ENC_LCD1920x1200p) &&
-		(output_type != TV_ENC_LCD2560x1600) &&
-		(output_type != TV_ENC_LCD768x1024p)) {
+	if (dsi_phy_config.state_change == 2)
 		dsi_host_write(MIPI_DSI_DWC_PHY_TMR_LPCLK_CFG_OS, 0x870025);
-	} else {
+	else
 		dsi_host_write(MIPI_DSI_DWC_PHY_TMR_LPCLK_CFG_OS, 0x260017);
-	}
 }
 
 /* *************************************************************
@@ -790,9 +816,10 @@ static unsigned int generic_if_wr(unsigned int address, unsigned int data_in)
  * Function: wait_bta_ack
  * Poll to check if the BTA ack is finished
  */
-static void wait_bta_ack(void)
+static int wait_bta_ack(void)
 {
-	unsigned int phy_status, i;
+	unsigned int phy_status;
+	int i;
 
 	/* Check if phydirection is RX */
 	i = CMD_TIMEOUT_CNT;
@@ -801,8 +828,10 @@ static void wait_bta_ack(void)
 		i--;
 		phy_status = dsi_host_read(MIPI_DSI_DWC_PHY_STATUS_OS);
 	} while ((((phy_status & 0x2) >> BIT_PHY_DIRECTION) == 0x0) && (i > 0));
-	if (i == 0)
+	if (i == 0) {
 		LCDERR("phy direction error: RX\n");
+		return -1;
+	}
 
 	/* Check if phydirection is return to TX */
 	i = CMD_TIMEOUT_CNT;
@@ -810,9 +839,13 @@ static void wait_bta_ack(void)
 		udelay(10);
 		i--;
 		phy_status = dsi_host_read(MIPI_DSI_DWC_PHY_STATUS_OS);
-	} while (((phy_status & 0x2) >> BIT_PHY_DIRECTION) == 0x1);
-	if (i == 0)
+	} while ((((phy_status & 0x2) >> BIT_PHY_DIRECTION) == 0x1) && (i > 0));
+	if (i == 0) {
 		LCDERR("phy direction error: TX\n");
+		return -1;
+	}
+
+	return 0;
 }
 
 /* *************************************************************
@@ -911,6 +944,7 @@ static int dsi_generic_read_packet(struct dsi_cmd_request_s *req,
 {
 	unsigned int d_para[2], read_data;
 	unsigned int i, j, done;
+	int ret = 0;
 
 	switch (req->data_type) {
 	case DT_GEN_RD_1:
@@ -938,7 +972,10 @@ static int dsi_generic_read_packet(struct dsi_cmd_request_s *req,
 		(d_para[0] << BIT_GEN_WC_LSBYTE)           |
 		(((unsigned int)req->vc_id) << BIT_GEN_VC) |
 		(((unsigned int)req->data_type) << BIT_GEN_DT)));
-	wait_bta_ack();
+	ret = wait_bta_ack();
+	if (ret)
+		return -1;
+
 	i = 0;
 	done = 0;
 	while (done == 0) {
@@ -965,6 +1002,7 @@ static int dsi_dcs_read_packet(struct dsi_cmd_request_s *req,
 {
 	unsigned int d_command, read_data;
 	unsigned int i, j, done;
+	int ret = 0;
 
 	d_command = ((unsigned int)req->payload[2]) & 0xff;
 
@@ -975,7 +1013,10 @@ static int dsi_dcs_read_packet(struct dsi_cmd_request_s *req,
 		(d_command << BIT_GEN_WC_LSBYTE)           |
 		(((unsigned int)req->vc_id) << BIT_GEN_VC) |
 		(((unsigned int)req->data_type) << BIT_GEN_DT)));
-	wait_bta_ack();
+	ret = wait_bta_ack();
+	if (ret)
+		return -1;
+
 	i = 0;
 	done = 0;
 	while (done == 0) {
@@ -1276,7 +1317,7 @@ int dsi_write_cmd(unsigned char *payload)
  * Function: dsi_read_single
  * Supported Data Type: DT_GEN_RD_0, DT_GEN_RD_1, DT_GEN_RD_2,
  *		DT_DCS_RD_0
- * Return:              data count
+ * Return:              data count, -1 for error
  */
 int dsi_read_single(unsigned char *payload, unsigned char *rd_data,
 		unsigned int rd_byte_len)
@@ -1322,6 +1363,9 @@ int dsi_read_single(unsigned char *payload, unsigned char *rd_data,
 		break;
 	}
 
+	if (num < 0)
+		LCDERR("mipi-dsi read error\n");
+
 	return num;
 }
 #else
@@ -1329,13 +1373,13 @@ int dsi_read_single(unsigned char *payload, unsigned char *rd_data,
 		unsigned int rd_byte_len)
 {
 	LCDPR("Don't support mipi-dsi read command\n");
-	return 0;
+	return -1;
 }
 #endif
 
 static void mipi_dsi_phy_config(struct dsi_phy_s *dphy, unsigned int dsi_ui)
 {
-	unsigned int temp, t_ui;
+	unsigned int temp, t_ui, t_req;
 
 	t_ui = (1000000 * 100) / (dsi_ui / 1000); /* 0.01ns*100 */
 	temp = t_ui * 8; /* lane_byte cycle time */
@@ -1361,6 +1405,30 @@ static void mipi_dsi_phy_config(struct dsi_phy_s *dphy, unsigned int dsi_ui)
 	dphy->clk_pre = ((DPHY_TIME_CLK_PRE(t_ui) + temp - 1) / temp) & 0xff;
 	dphy->init = (DPHY_TIME_INIT(t_ui) + temp - 1) / temp;
 	dphy->wakeup = (DPHY_TIME_WAKEUP(t_ui) + temp - 1) / temp;
+
+	/* check dphy spec: (unit: ns) */
+	if ((temp * dsi_phy_config.lp_tesc / 100) <= 100)
+		LCDERR("lp_tesc timing error\n");
+	if ((temp * dsi_phy_config.lp_lpx / 100) <= 50)
+		LCDERR("lp_lpx timing error\n");
+	if ((temp * dsi_phy_config.hs_exit / 100) <= 100)
+		LCDERR("hs_exit timing error\n");
+	t_req = ((t_ui > (60 * 100 / 4)) ?
+		(8 * t_ui) : ((60 * 100) + 4 * t_ui));
+	if ((temp * dsi_phy_config.hs_trail / 100) <= ((t_req + 50) / 100))
+		LCDERR("hs_trail timing error\n");
+	t_req = temp * dsi_phy_config.hs_prepare / 100;
+	if ((t_req <= (40 + (t_ui * 4 / 100))) ||
+		(t_req >= (85 + (t_ui * 6 / 100))))
+		LCDERR("hs_prepare timing error\n");
+	t_req = 145 + (t_ui * 10 / 100);
+	if (((temp * dsi_phy_config.hs_zero / 100) +
+		(temp * dsi_phy_config.hs_prepare / 100)) <= t_req)
+		LCDERR("hs_zero timing error\n");
+	if ((temp * dsi_phy_config.init / 100) <= 100000)
+		LCDERR("init timing error\n");
+	if ((temp * dsi_phy_config.wakeup / 100) <= 1000000)
+		LCDERR("wakeup timing error\n");
 
 	if (lcd_debug_print_flag) {
 		LCDPR("%s:\n"
@@ -1590,6 +1658,45 @@ static void mipi_dsi_host_init(struct lcd_config_s *pconf)
 		pconf);
 }
 
+static void mipi_dsi_check_state(struct dsi_config_s *dconf,
+		unsigned char reg, int cnt)
+{
+	int ret = 0, i, len;
+	unsigned char *rd_data;
+	unsigned char payload[3] = {DT_GEN_RD_1, 1, 0x04};
+	char str[100];
+
+	LCDPR("%s\n", __func__);
+
+	rd_data = kmalloc_array(cnt, sizeof(unsigned char), GFP_KERNEL);
+	if (rd_data == NULL) {
+		LCDERR("%s: rd_data error\n", __func__);
+		return;
+	}
+
+	payload[2] = reg;
+	ret = dsi_read_single(payload, rd_data, cnt);
+	if (ret < 0) {
+		dconf->check_state = 0;
+		lcd_vcbus_setb(L_VCOM_VS_ADDR, 0, 12, 1);
+		kfree(rd_data);
+		return;
+	}
+
+	dconf->check_state = 1;
+	lcd_vcbus_setb(L_VCOM_VS_ADDR, 1, 12, 1);
+	len = sprintf(str, "read reg 0x%02x: ", reg);
+	for (i = 0; i < ret; i++) {
+		if (i == 0)
+			len += sprintf(str+len, "0x%02x", rd_data[i]);
+		else
+			len += sprintf(str+len, ",0x%02x", rd_data[i]);
+	}
+	pr_info("%s\n", str);
+
+	kfree(rd_data);
+}
+
 static void mipi_dsi_link_on(struct lcd_config_s *pconf)
 {
 	unsigned int op_mode_init, op_mode_disp;
@@ -1605,6 +1712,14 @@ static void mipi_dsi_link_on(struct lcd_config_s *pconf)
 	op_mode_init = dconf->operation_mode_init;
 	op_mode_disp = dconf->operation_mode_display;
 
+	if (dconf->check_en)
+		mipi_dsi_check_state(dconf, dconf->check_reg, dconf->check_cnt);
+
+	if (dconf->dsi_init_on) {
+		dsi_write_cmd(dconf->dsi_init_on);
+		LCDPR("dsi init on\n");
+	}
+
 #ifdef CONFIG_AMLOGIC_LCD_EXTERN
 	if (dconf->extern_init < LCD_EXTERN_INDEX_INVALID) {
 		lcd_ext = aml_lcd_extern_get_driver(dconf->extern_init);
@@ -1612,19 +1727,13 @@ static void mipi_dsi_link_on(struct lcd_config_s *pconf)
 			LCDPR("no lcd_extern driver\n");
 		} else {
 			if (lcd_ext->config.table_init_on) {
-				dsi_write_cmd(
-					lcd_ext->config.table_init_on);
+				dsi_write_cmd(lcd_ext->config.table_init_on);
 				LCDPR("[extern]%s dsi init on\n",
 					lcd_ext->config.name);
 			}
 		}
 	}
 #endif
-
-	if (dconf->dsi_init_on) {
-		dsi_write_cmd(dconf->dsi_init_on);
-		LCDPR("dsi init on\n");
-	}
 
 	if (op_mode_disp != op_mode_init) {
 		set_mipi_dsi_host(MIPI_DSI_VIRTUAL_CHAN_ID,
@@ -1732,20 +1841,21 @@ void lcd_mipi_dsi_config_set(struct lcd_config_s *pconf)
 	/* Venc resolution format */
 	switch (dconf->phy_stop_wait) {
 	case 1: /* standard */
-		dconf->venc_fmt = TV_ENC_LCD768x1024p;
+		dsi_phy_config.state_change = 1;
 		break;
 	case 2: /* slow */
-		dconf->venc_fmt = TV_ENC_LCD1280x720;
+		dsi_phy_config.state_change = 2;
 		break;
 	case 0: /* auto */
 	default:
 		if ((pconf->lcd_basic.h_active != 240) &&
 			(pconf->lcd_basic.h_active != 768) &&
 			(pconf->lcd_basic.h_active != 1920) &&
-			(pconf->lcd_basic.h_active != 2560))
-			dconf->venc_fmt = TV_ENC_LCD1280x720;
-		else
-			dconf->venc_fmt = TV_ENC_LCD768x1024p;
+			(pconf->lcd_basic.h_active != 2560)) {
+			dsi_phy_config.state_change = 2;
+		} else {
+			dsi_phy_config.state_change = 1;
+		}
 		break;
 	}
 }
@@ -1787,8 +1897,9 @@ void lcd_mipi_dsi_config_post(struct lcd_config_s *pconf)
 	/* phy config */
 	mipi_dsi_phy_config(&dsi_phy_config, dconf->bit_rate);
 
-	if (lcd_debug_print_flag)
-		mipi_dsi_host_print_info(pconf);
+	/* update check_state */
+	if (dconf->check_en)
+		dconf->check_state = lcd_vcbus_getb(L_VCOM_VS_ADDR, 12, 1);
 }
 
 static void mipi_dsi_host_on(struct lcd_config_s *pconf)
@@ -1798,6 +1909,9 @@ static void mipi_dsi_host_on(struct lcd_config_s *pconf)
 	dsi_phy_config_set(pconf);
 
 	mipi_dsi_link_on(pconf);
+
+	if (lcd_debug_print_flag)
+		mipi_dsi_host_print_info(pconf);
 }
 
 static void mipi_dsi_host_off(void)

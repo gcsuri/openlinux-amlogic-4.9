@@ -45,6 +45,7 @@ enum {
 	CODECIO_AOBUS_BASE,
 	CODECIO_VCBUS_BASE,
 	CODECIO_DMCBUS_BASE,
+	CODECIO_EFUSE_BASE,
 	CODECIO_BUS_MAX,
 };
 
@@ -53,6 +54,11 @@ static void __iomem *codecio_reg_map[CODECIO_BUS_MAX];
 static int codecio_reg_read(u32 bus_type, unsigned int reg, unsigned int *val)
 {
 	if ((bus_type >= CODECIO_CBUS_BASE) && (bus_type < CODECIO_BUS_MAX)) {
+		if (codecio_reg_map[bus_type] == NULL) {
+			pr_err("No support bus type %d to read.\n", bus_type);
+			return -1;
+		}
+
 		*val = readl((codecio_reg_map[bus_type] + reg));
 		return 0;
 	} else
@@ -62,6 +68,11 @@ static int codecio_reg_read(u32 bus_type, unsigned int reg, unsigned int *val)
 static int codecio_reg_write(u32 bus_type, unsigned int reg, unsigned int val)
 {
 	if ((bus_type >= CODECIO_CBUS_BASE) && (bus_type < CODECIO_BUS_MAX)) {
+		if (codecio_reg_map[bus_type] == NULL) {
+			pr_err("No support bus type %d to write.\n", bus_type);
+			return -1;
+		}
+
 		writel(val, (codecio_reg_map[bus_type] + reg));
 		return 0;
 	} else
@@ -307,6 +318,28 @@ void codecio_write_resetbus(unsigned int reg, unsigned int val)
 	int ret;
 
 	ret = codecio_reg_write(CODECIO_CBUS_BASE, reg << 2, val);
+	if (ret)
+		pr_err("write reset reg %x error %d\n", reg, ret);
+}
+
+int codecio_read_efusebus(unsigned int reg)
+{
+	int ret, val;
+
+	ret = codecio_reg_read(CODECIO_EFUSE_BASE, reg << 2, &val);
+	if (ret) {
+		pr_err("read reset reg %x error %d\n", reg, ret);
+		return -1;
+	}
+
+	return val;
+}
+
+void codecio_write_efusebus(unsigned int reg, unsigned int val)
+{
+	int ret;
+
+	ret = codecio_reg_write(CODECIO_EFUSE_BASE, reg << 2, val);
 	if (ret)
 		pr_err("write reset reg %x error %d\n", reg, ret);
 }

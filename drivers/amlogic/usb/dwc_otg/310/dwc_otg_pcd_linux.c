@@ -62,6 +62,7 @@
 #include <linux/platform_device.h>
 #include <linux/usb/gadget.h>
 #include <linux/amlogic/usb-gxl.h>
+#include <linux/amlogic/usb-v2.h>
 #include <linux/of_device.h>
 
 static struct gadget_wrapper {
@@ -1257,16 +1258,27 @@ int dwc_usb_change(struct notifier_block *nb,
 			      unsigned long value, void *pdata)
 {
 	dwc_otg_device_t *otg_dev;
+	dwc_otg_core_global_regs_t *global_regs;
 
 	otg_dev = container_of(nb, dwc_otg_device_t, nb);
+	global_regs = otg_dev->core_if->core_global_regs;
 
 	if (value) {
 		DWC_DEBUGPL(DBG_PCDV, "start usb device\n");
+		otg_dev->host_plug = 0;
 		dwc_otg_enable_global_interrupts(otg_dev->core_if);
+		if (otg_dev->core_if->phy_interface == 0)
+			dwc_otg_enable_device_interrupts(otg_dev->core_if);
 		otg_dev->pcd->core_if->pcd_cb->start(otg_dev->pcd);
 	} else {
+		otg_dev->host_plug = 1;
 		DWC_DEBUGPL(DBG_PCDV, "stop usb device\n");
 		dwc_otg_disable_global_interrupts(otg_dev->core_if);
+
+		/* Disable all interrupts. */
+		if (otg_dev->core_if->phy_interface == 0)
+			DWC_WRITE_REG32(&global_regs->gintmsk, 0);
+
 		otg_dev->pcd->core_if->pcd_cb->stop(otg_dev->pcd);
 	}
 
@@ -1293,7 +1305,10 @@ int pcd_init(struct platform_device *pdev)
 	}
 
 #ifdef CONFIG_AMLOGIC_USB3PHY
-	aml_new_usb_register_notifier(&otg_dev->nb);
+	if (otg_dev->core_if->phy_interface == 1)
+		aml_new_usb_register_notifier(&otg_dev->nb);
+	else
+		aml_new_usb_v2_register_notifier(&otg_dev->nb);
 	otg_dev->nb.notifier_call = dwc_usb_change;
 #endif
 
@@ -1361,7 +1376,10 @@ void pcd_remove(struct platform_device *pdev)
 	free_wrapper(gadget_wrapper);
 	dwc_otg_pcd_remove(otg_dev->pcd);
 #ifdef CONFIG_AMLOGIC_USB3PHY
-	aml_new_usb_unregister_notifier(&otg_dev->nb);
+	if (otg_dev->core_if->phy_interface == 1)
+		aml_new_usb_unregister_notifier(&otg_dev->nb);
+	else
+		aml_new_usb_v2_unregister_notifier(&otg_dev->nb);
 #endif
 	otg_dev->pcd = 0;
 }

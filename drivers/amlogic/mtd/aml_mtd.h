@@ -63,6 +63,16 @@ extern unsigned char pagelist_hynix256[128];
 #define CONFIG_ENV_SIZE  (64*1024U)
 
 /*
+ * open this macro, the env will store in
+ * normal partition: "environment". and the
+ * env region in reserve zone will be hidden
+ *
+ * please remember add a partition named
+ * "environment" in dts file.
+ * #define CONFIG_MTD_ENV_IN_NAND
+ */
+
+/*
  ** Max page list cnt for usrdef mode
  */
 #define NAND_PAGELIST_CNT 16
@@ -134,6 +144,11 @@ struct _ext_info {
 #define NAND_FIPMODE_COMPACT    (0)
 #define NAND_FIPMODE_DISCRETE   (1)
 
+/* if you don't need skip the bad blocks when add
+ * partitions, please open this macro.
+ * #define CONFIG_NOT_SKIP_BAD_BLOCK
+ */
+
 struct _fip_info {
 	/* version */
 	uint16_t version;
@@ -195,6 +210,12 @@ union nand_core_clk {
 #define BOOT_COPY_NUM (BOOT_TOTAL_PAGES / BOOT_PAGES_PER_COPY)
 /*it also means normal device start addrress */
 #define RESERVED_BLOCK_NUM 48
+/* reserved region info */
+#define NAND_GAP_BLOCK_NUM 4
+#define NAND_BBT_BLOCK_NUM 4
+#define NAND_ENV_BLOCK_NUM 8
+#define NAND_KEY_BLOCK_NUM 8
+#define NAND_DTB_BLOCK_NUM 4
 
 #define AML_CHIP_NONE_RB	4
 #define AML_INTERLEAVING_MODE	8

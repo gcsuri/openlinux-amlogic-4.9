@@ -19,6 +19,8 @@
 #include <linux/mtd/nand.h>
 #include <linux/mtd/nand_ecc.h>
 #include <linux/mtd/partitions.h>
+#include <linux/clk.h>
+#include <linux/clk-provider.h>
 
 #include "aml_mtd.h"
 
@@ -260,6 +262,41 @@ static void m3_nand_select_chip(struct aml_nand_chip *aml_chip, int chipnr)
 	controller_select_chip(controller, chipnr);
 }
 
+#define GATE_CLK	0
+#define GATE_CLKIN	1
+static int aml_nfc_clk_init(struct hw_controller *controller)
+{
+	char *clk_name[2] = {"core", "clkin"};
+	int i, ret = 0;
+
+	for (i = 0; i < 2; i++) {
+		controller->clk[i] =
+			devm_clk_get(controller->device, clk_name[i]);
+		if (IS_ERR(controller->clk[i])) {
+			dev_err(controller->device,
+				"failed to get %s\n", clk_name[i]);
+			return PTR_ERR(controller->clk[i]);
+		}
+	}
+
+	ret = clk_prepare_enable(controller->clk[GATE_CLK]);
+	if (ret) {
+		dev_err(controller->device, "failed to set nand gate\n");
+		return ret;
+	}
+
+	ret = clk_prepare_enable(controller->clk[GATE_CLKIN]);
+	if (ret) {
+		dev_err(controller->device, "failed to enable nand clk\n");
+		goto clk_enbale_error;
+	}
+	return 0;
+
+clk_enbale_error:
+	clk_disable_unprepare(controller->clk[GATE_CLK]);
+	return ret;
+}
+
 void get_sys_clk_rate_mtd(struct hw_controller *controller, int *rate)
 {
 	int clk_freq = *rate;
@@ -270,12 +307,16 @@ void get_sys_clk_rate_mtd(struct hw_controller *controller, int *rate)
 
 	if (cpu_id.family_id == MESON_CPU_MAJOR_ID_AXG)
 #else
-	if (get_cpu_type() == MESON_CPU_MAJOR_ID_AXG)
+	if ((get_cpu_type() == MESON_CPU_MAJOR_ID_AXG)
+		|| (get_cpu_type() == MESON_CPU_MAJOR_ID_G12A)
+		|| (get_cpu_type() == MESON_CPU_MAJOR_ID_G12B))
 		always_on = 0x1 << 28;
 #endif
 	if ((get_cpu_type() == MESON_CPU_MAJOR_ID_GXBB)
 		|| (get_cpu_type() == MESON_CPU_MAJOR_ID_GXL)
-		|| (get_cpu_type() == MESON_CPU_MAJOR_ID_AXG)) {
+		|| (get_cpu_type() == MESON_CPU_MAJOR_ID_AXG)
+		|| (get_cpu_type() == MESON_CPU_MAJOR_ID_G12A)
+		|| (get_cpu_type() == MESON_CPU_MAJOR_ID_G12B)) {
 		switch (clk_freq) {
 		case 24:
 			clk = 0x80000201;
@@ -305,12 +346,23 @@ static void m3_nand_hw_init(struct aml_nand_chip *aml_chip)
 {
 	int sys_clk_rate, bus_cycle, bus_timing;
 
-	sys_clk_rate = 200;
-	get_sys_clk_rate_mtd(controller, &sys_clk_rate);
+	aml_nfc_clk_init(controller);
 
-	/* sys_time = (10000 / sys_clk_rate); */
+	/*
+	if (get_cpu_type() == MESON_CPU_MAJOR_ID_G12A) {
+		sys_clk_rate = 24;
+		bus_cycle  = 4;
+		bus_timing = 3;
+	} else {
+		sys_clk_rate = 200;
+		bus_cycle  = 6;
+		bus_timing = bus_cycle + 1;
+	}
+	*/
+	sys_clk_rate = 200;
 	bus_cycle  = 6;
 	bus_timing = bus_cycle + 1;
+	get_sys_clk_rate_mtd(controller, &sys_clk_rate);
 
 	NFC_SET_CFG(controller, 0);
 	NFC_SET_TIMING_ASYC(controller, bus_timing, (bus_cycle - 1));
@@ -333,12 +385,19 @@ static void m3_nand_adjust_timing(struct aml_nand_chip *aml_chip)
 	else
 		sys_clk_rate = 250;
 
-	get_sys_clk_rate_mtd(controller, &sys_clk_rate);
-
-	/* sys_time = (10000 / sys_clk_rate); */
-
+	/*
+	if (get_cpu_type() == MESON_CPU_MAJOR_ID_G12A) {
+		sys_clk_rate = 24;
+		bus_cycle  = 4;
+		bus_timing = 3;
+	} else {
+		bus_cycle  = 6;
+		bus_timing = bus_cycle + 1;
+	}
+	*/
 	bus_cycle  = 6;
 	bus_timing = bus_cycle + 1;
+	get_sys_clk_rate_mtd(controller, &sys_clk_rate);
 
 	NFC_SET_CFG(controller, 0);
 	NFC_SET_TIMING_ASYC(controller, bus_timing, (bus_cycle - 1));
@@ -951,7 +1010,9 @@ static int m3_nand_probe(struct aml_nand_platform *plat, unsigned int dev_num)
 
 #endif
 	} else {
+	#ifndef CONFIG_MTD_ENV_IN_NAND
 		aml_ubootenv_init(aml_chip);
+	#endif
 		aml_key_init(aml_chip);
 		amlnf_dtb_init(aml_chip);
 	}
@@ -1020,7 +1081,7 @@ int nand_init(struct platform_device *pdev)
 {
 	struct aml_nand_platform *plat = NULL;
 	struct resource *res_mem, *res_irq;
-	int i, ret, size;
+	int i, ret = 0, size;
 
 	controller = kzalloc(sizeof(struct hw_controller), GFP_KERNEL);
 	if (controller == NULL)
@@ -1064,6 +1125,10 @@ int nand_init(struct platform_device *pdev)
 	controller->nand_clk_reg = devm_ioremap_nocache(&pdev->dev,
 					aml_nand_mid_device.nand_clk_ctrl,
 					sizeof(int));
+	controller->nand_clk_upper = devm_ioremap_nocache(&pdev->dev,
+					NAND_CLK_CNTL_INNER,
+					sizeof(int));
+
 	if (controller->nand_clk_reg == NULL) {
 		dev_err(&pdev->dev, "ioremap External Nand Clock IO fail\n");
 		return -ENOMEM;
@@ -1133,6 +1198,10 @@ int nand_init(struct platform_device *pdev)
 			continue;
 		}
 	}
+
+	if (ret)
+		kfree(controller);
+
 	nand_curr_device = 1; /* fixit */
 	return ret;
 }

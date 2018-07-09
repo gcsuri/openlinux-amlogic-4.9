@@ -34,6 +34,8 @@
 /*#include <linux/major.h>*/
 #include <linux/cdev.h>
 #include <linux/delay.h>
+#include <linux/jiffies.h>
+#include <linux/workqueue.h>
 #include <linux/uaccess.h>
 #include <linux/clk.h>
 
@@ -94,9 +96,19 @@ static struct vinfo_s cvbs_info[] = {
 	},
 };
 
+/*bit[0]: 0=vid_pll, 1=gp0_pll*/
+/*bit[1]: 0=vid2_clk, 1=vid1_clk*/
+unsigned int cvbs_clk_path;
+
 static struct disp_module_info_s disp_module_info;
 static struct disp_module_info_s *info;
+static enum cvbs_mode_e local_cvbs_mode;
+static unsigned int vdac_cfg_valid;
+static unsigned int vdac_cfg_value;
+static DEFINE_MUTEX(setmode_mutex);
+static DEFINE_MUTEX(CC_mutex);
 
+static int cvbs_vdac_power_level;
 static void vdac_power_level_store(char *para);
 SET_CVBS_CLASS_ATTR(vdac_power_level, vdac_power_level_store);
 
@@ -110,19 +122,12 @@ struct class_attribute class_CVBS_attr_wss = __ATTR(wss, 0644,
 			aml_CVBS_attr_wss_show, aml_CVBS_attr_wss_store);
 #endif /*CONFIG_AMLOGIC_WSS*/
 
-static int cvbs_vdac_power_level;
-
-static DEFINE_MUTEX(setmode_mutex);
-static DEFINE_MUTEX(CC_mutex);
-
-static enum cvbs_mode_e local_cvbs_mode;
 static void cvbs_config_vdac(unsigned int flag, unsigned int cfg);
-
+static void cvbs_cntl_output(unsigned int open);
+static void cvbs_performance_config(unsigned int index);
 #ifdef CONFIG_CVBS_PERFORMANCE_COMPATIBILITY_SUPPORT
 static void cvbs_performance_enhancement(enum cvbs_mode_e mode);
 #endif
-static void cvbs_cntl_output(unsigned int open);
-static void cvbs_performance_config(unsigned int index);
 
 #if 0
 static int get_vdac_power_level(void)
@@ -146,7 +151,12 @@ static int check_cpu_type(unsigned int cpu_type)
  * }
  */
 
-static unsigned int vdac_cfg_valid = 0, vdac_cfg_value;
+int cvbs_cpu_type(void)
+{
+	return info->cvbs_data->cpu_id;
+}
+EXPORT_SYMBOL(cvbs_cpu_type);
+
 static unsigned int cvbs_get_trimming_version(unsigned int flag)
 {
 	unsigned int version = 0xff;
@@ -260,6 +270,7 @@ static void cvbs_out_disable_clk(void)
 
 static void cvbs_out_disable_venc(void)
 {
+	info->dwork_flag = 0;
 	cvbs_cntl_output(0);
 	cvbs_out_reg_write(ENCI_VIDEO_EN, 0);
 
@@ -352,6 +363,13 @@ static void cvbs_out_clk_gate_ctrl(int status)
 	}
 }
 
+static void cvbs_dv_dwork(struct work_struct *work)
+{
+	if (!info->dwork_flag)
+		return;
+	cvbs_cntl_output(1);
+}
+
 int cvbs_out_setmode(void)
 {
 	int ret;
@@ -369,8 +387,7 @@ int cvbs_out_setmode(void)
 
 	cvbs_cntl_output(0);
 	cvbs_out_reg_write(VENC_VDAC_SETTING, 0xff);
-	/* Before setting clk for CVBS, disable ENCP/I to avoid hungup */
-	cvbs_out_reg_write(ENCP_VIDEO_EN, 0);
+	/* Before setting clk for CVBS, disable ENCI to avoid hungup */
 	cvbs_out_reg_write(ENCI_VIDEO_EN, 0);
 	set_vmode_clk();
 	ret = cvbs_out_set_venc(local_cvbs_mode);
@@ -381,9 +398,8 @@ int cvbs_out_setmode(void)
 #ifdef CONFIG_CVBS_PERFORMANCE_COMPATIBILITY_SUPPORT
 	cvbs_performance_enhancement(local_cvbs_mode);
 #endif
-	msleep(1000);
-	cvbs_cntl_output(1);
-
+	info->dwork_flag = 1;
+	schedule_delayed_work(&info->dv_dwork, msecs_to_jiffies(1000));
 	mutex_unlock(&setmode_mutex);
 	return 0;
 }
@@ -535,7 +551,6 @@ static int cvbs_set_current_vmode(enum vmode_e mode)
 		      tvmode, info->vinfo->sync_duration_den,
 		      info->vinfo->sync_duration_num);
 
-	cvbs_out_reg_write(VPP_POSTBLEND_H_SIZE, info->vinfo->width);
 	if (mode & VMODE_INIT_BIT_MASK) {
 		cvbs_out_vpu_power_ctrl(1);
 		cvbs_out_clk_gate_ctrl(1);
@@ -565,6 +580,7 @@ static int cvbs_vmode_is_supported(enum vmode_e mode)
 }
 static int cvbs_module_disable(enum vmode_e cur_vmod)
 {
+	info->dwork_flag = 0;
 	cvbs_cntl_output(0);
 
 	cvbs_out_vpu_power_ctrl(0);
@@ -573,11 +589,30 @@ static int cvbs_module_disable(enum vmode_e cur_vmod)
 	return 0;
 }
 
+static int cvbs_vout_state;
+static int cvbs_vout_set_state(int index)
+{
+	cvbs_vout_state |= (1 << index);
+	return 0;
+}
+
+static int cvbs_vout_clr_state(int index)
+{
+	cvbs_vout_state &= ~(1 << index);
+	return 0;
+}
+
+static int cvbs_vout_get_state(void)
+{
+	return cvbs_vout_state;
+}
+
 #ifdef CONFIG_PM
 static int cvbs_suspend(void)
 {
 	/* TODO */
 	/* video_dac_disable(); */
+	info->dwork_flag = 0;
 	cvbs_cntl_output(0);
 	return 0;
 }
@@ -591,14 +626,17 @@ static int cvbs_resume(void)
 }
 #endif
 
-static struct vout_server_s cvbs_server = {
-	.name = "vout_cvbs_server",
+static struct vout_server_s cvbs_vout_server = {
+	.name = "cvbs_vout_server",
 	.op = {
 		.get_vinfo = cvbs_get_current_info,
 		.set_vmode = cvbs_set_current_vmode,
 		.validate_vmode = cvbs_validate_vmode,
 		.vmode_is_supported = cvbs_vmode_is_supported,
 		.disable = cvbs_module_disable,
+		.set_state = cvbs_vout_set_state,
+		.clr_state = cvbs_vout_clr_state,
+		.get_state = cvbs_vout_get_state,
 		.set_vframe_rate_hint = NULL,
 		.set_vframe_rate_end_hint = NULL,
 		.set_vframe_rate_policy = NULL,
@@ -610,15 +648,45 @@ static struct vout_server_s cvbs_server = {
 	},
 };
 
+#ifdef CONFIG_AMLOGIC_VOUT2_SERVE
+static struct vout_server_s cvbs_vout2_server = {
+	.name = "cvbs_vout2_server",
+	.op = {
+		.get_vinfo = cvbs_get_current_info,
+		.set_vmode = cvbs_set_current_vmode,
+		.validate_vmode = cvbs_validate_vmode,
+		.vmode_is_supported = cvbs_vmode_is_supported,
+		.disable = cvbs_module_disable,
+		.set_state = cvbs_vout_set_state,
+		.clr_state = cvbs_vout_clr_state,
+		.get_state = cvbs_vout_get_state,
+		.set_vframe_rate_hint = NULL,
+		.set_vframe_rate_end_hint = NULL,
+		.set_vframe_rate_policy = NULL,
+		.get_vframe_rate_policy = NULL,
+#ifdef CONFIG_PM
+		.vout_suspend = cvbs_suspend,
+		.vout_resume = cvbs_resume,
+#endif
+	},
+};
+#endif
+
 static void cvbs_init_vout(void)
 {
 	if (info->vinfo == NULL)
 		info->vinfo = &cvbs_info[MODE_480CVBS];
 
-	if (vout_register_server(&cvbs_server))
+	if (vout_register_server(&cvbs_vout_server))
 		cvbs_log_err("register cvbs module server fail\n");
 	else
 		cvbs_log_info("register cvbs module server ok\n");
+#ifdef CONFIG_AMLOGIC_VOUT2_SERVE
+	if (vout2_register_server(&cvbs_vout2_server))
+		cvbs_log_err("register cvbs module vout2 server fail\n");
+	else
+		cvbs_log_info("register cvbs module vout2 server ok\n");
+#endif
 }
 
 /* **************************************************** */
@@ -736,6 +804,10 @@ static void cvbs_performance_regs_dump(void)
 			HHI_VDAC_CNTL0,
 			HHI_VDAC_CNTL1
 		};
+	unsigned int performance_regs_vdac_g12a[] = {
+			HHI_VDAC_CNTL0_G12A,
+			HHI_VDAC_CNTL1_G12A
+		};
 	int i, size;
 
 	size = sizeof(performance_regs_enci)/sizeof(unsigned int);
@@ -744,12 +816,19 @@ static void cvbs_performance_regs_dump(void)
 		pr_info("vcbus [0x%x] = 0x%x\n", performance_regs_enci[i],
 			cvbs_out_reg_read(performance_regs_enci[i]));
 	}
-
-	size = sizeof(performance_regs_vdac)/sizeof(unsigned int);
+	if (cvbs_cpu_type() == CVBS_CPU_TYPE_G12A)
+		size = sizeof(performance_regs_vdac_g12a)/sizeof(unsigned int);
+	else
+		size = sizeof(performance_regs_vdac)/sizeof(unsigned int);
 	pr_info("------------------------\n");
 	for (i = 0; i < size; i++) {
-		pr_info("hiu [0x%x] = 0x%x\n", performance_regs_vdac[i],
-			cvbs_out_hiu_read(performance_regs_vdac[i]));
+		if (cvbs_cpu_type() == CVBS_CPU_TYPE_G12A)
+			pr_info("hiu [0x%x] = 0x%x\n",
+			performance_regs_vdac_g12a[i],
+			cvbs_out_hiu_read(performance_regs_vdac_g12a[i]));
+		else
+			pr_info("hiu [0x%x] = 0x%x\n", performance_regs_vdac[i],
+				cvbs_out_hiu_read(performance_regs_vdac[i]));
 	}
 	pr_info("------------------------\n");
 }
@@ -798,6 +877,9 @@ enum {
 
 	/* dump the perfomance config in dts */
 	CMD_VP_CONFIG_DUMP,
+	/*set pll path: 3:vid pll  2:gp0 pll path2*/
+			/*1:gp0 pll path1*/
+	CMD_VP_SET_PLLPATH,
 
 	CMD_HELP,
 
@@ -867,6 +949,8 @@ static void cvbs_debug_store(char *buf)
 		cmd = CMD_VP_GET;
 	else if (!strncmp(argv[0], "vpconf", strlen("vpconf")))
 		cmd = CMD_VP_CONFIG_DUMP;
+	else if (!strncmp(argv[0], "set_clkpath", strlen("set_clkpath")))
+		cmd = CMD_VP_SET_PLLPATH;
 	else if (!strncmp(argv[0], "help", strlen("help")))
 		cmd = CMD_HELP;
 	else {
@@ -1025,7 +1109,33 @@ static void cvbs_debug_store(char *buf)
 	case CMD_VP_CONFIG_DUMP:
 		print_info("performance config in dts:\n");
 		cvbs_performance_config_dump();
+		break;
+	case CMD_VP_SET_PLLPATH:
+		if (cvbs_cpu_type() != CVBS_CPU_TYPE_G12A) {
+			print_info("ERR:Only g12a chip supported\n");
+			break;
+		}
+		if (argc != 2) {
+			print_info("[%s] set_clkpath 0/1/2/3\n",
+				__func__);
+			goto DEBUG_END;
+		}
+		ret = kstrtoul(argv[1], 10, &value);
+		if (value == 1 || value == 2 ||
+			value == 3 || value == 0) {
+			cvbs_clk_path = value;
+			print_info("path 0:vid_pll vid2_clk\n");
+			print_info("path 1:gp0_pll vid2_clk\n");
+			print_info("path 2:vid_pll vid1_clk\n");
+			print_info("path 3:gp0_pll vid1_clk\n");
+			print_info("you select path %d\n", cvbs_clk_path);
+		} else {
+			print_info("invalid value, only 0/1/2/3\n");
+			print_info("bit[0]: 0=vid_pll, 1=gp0_pll\n");
+			print_info("bit[1]: 0=vid2_clk, 1=vid1_clk\n");
+		}
 
+		break;
 	case CMD_HELP:
 		print_info("command format:\n"
 		"\tr c/h/v address_hex\n"
@@ -1034,7 +1144,8 @@ static void cvbs_debug_store(char *buf)
 		"\tw value_hex c/h/v address_hex\n"
 		"\twb value_hex c/h/v address_hex start_dec length_dec\n"
 		"\tbist 0/1/2/3/off\n"
-		"\tclkdump\n");
+		"\tclkdump\n"
+		"\tset_clkpath 0/1/2/3\n");
 		break;
 	default:
 		break;
@@ -1199,20 +1310,26 @@ static void cvbsout_clktree_remove(struct device *dev)
 #ifdef CONFIG_OF
 struct meson_cvbsout_data meson_gxl_cvbsout_data = {
 	.cntl0_val = 0xb0001,
-	.cpu_id = CPU_TYPE_GXL,
+	.cpu_id = CVBS_CPU_TYPE_GXL,
 	.name = "meson-gxl-cvbsout",
 };
 
 struct meson_cvbsout_data meson_gxm_cvbsout_data = {
 	.cntl0_val = 0xb0001,
-	.cpu_id = CPU_TYPE_GXM,
+	.cpu_id = CVBS_CPU_TYPE_GXM,
 	.name = "meson-gxm-cvbsout",
 };
 
 struct meson_cvbsout_data meson_txlx_cvbsout_data = {
 	.cntl0_val = 0x620001,
-	.cpu_id = CPU_TYPE_TXLX,
+	.cpu_id = CVBS_CPU_TYPE_TXLX,
 	.name = "meson-txlx-cvbsout",
+};
+
+struct meson_cvbsout_data meson_g12a_cvbsout_data = {
+	.cntl0_val = 0x906001,
+	.cpu_id = CVBS_CPU_TYPE_G12A,
+	.name = "meson-g12a-cvbsout",
 };
 
 static const struct of_device_id meson_cvbsout_dt_match[] = {
@@ -1225,6 +1342,9 @@ static const struct of_device_id meson_cvbsout_dt_match[] = {
 	}, {
 		.compatible = "amlogic, cvbsout-txlx",
 		.data		= &meson_txlx_cvbsout_data,
+	}, {
+		.compatible = "amlogic, cvbsout-g12a",
+		.data		= &meson_g12a_cvbsout_data,
 	},
 	{},
 };
@@ -1234,6 +1354,8 @@ static int cvbsout_probe(struct platform_device *pdev)
 {
 	int  ret;
 	const struct of_device_id *match;
+
+	cvbs_clk_path = 0;
 
 	local_cvbs_mode = MODE_MAX;
 	info = &disp_module_info;
@@ -1261,6 +1383,7 @@ static int cvbsout_probe(struct platform_device *pdev)
 		cvbs_log_err("create_cvbs_attr error\n");
 		return -1;
 	}
+	INIT_DELAYED_WORK(&info->dv_dwork, cvbs_dv_dwork);
 	cvbs_log_info("%s OK\n", __func__);
 	return 0;
 }
@@ -1280,7 +1403,10 @@ static int cvbsout_remove(struct platform_device *pdev)
 		cdev_del(info->cdev);
 		kfree(info);
 	}
-	vout_unregister_server(&cvbs_server);
+	vout_unregister_server(&cvbs_vout_server);
+#ifdef CONFIG_AMLOGIC_VOUT2_SERVE
+	vout2_unregister_server(&cvbs_vout2_server);
+#endif
 	cvbs_log_info("%s\n", __func__);
 	return 0;
 }

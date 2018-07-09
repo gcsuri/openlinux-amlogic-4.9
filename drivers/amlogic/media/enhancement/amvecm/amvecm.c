@@ -55,6 +55,7 @@
 #include "amcsc.h"
 #include "keystone_correction.h"
 #include "bitdepth.h"
+#include <linux/amlogic/media/amdolbyvision/dolby_vision.h>
 
 #define pr_amvecm_dbg(fmt, args...)\
 	do {\
@@ -902,8 +903,12 @@ int amvecm_on_vs(
 {
 	int result = 0;
 
-	if ((probe_ok == 0) || for_dolby_vision_certification())
+	if (probe_ok == 0)
 		return 0;
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
+	if (for_dolby_vision_certification())
+		return 0;
+#endif
 	if (flags & CSC_FLAG_CHECK_OUTPUT) {
 		/* to test if output will change */
 		return amvecm_matrix_process(
@@ -957,7 +962,9 @@ void refresh_on_vs(struct vframe_s *vf)
 		return;
 	if (vf != NULL) {
 		vpp_get_vframe_hist_info(vf);
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 		if (!for_dolby_vision_certification())
+#endif
 			ve_on_vs(vf);
 		vpp_backup_histgram(vf);
 	}
@@ -3178,9 +3185,10 @@ static void amvecm_pq_enable(int enable)
 {
 	if (enable) {
 		vecm_latch_flag |= FLAG_VE_DNLP_EN;
-
-		amcm_enable();
-
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
+		if (!is_dolby_vision_enable())
+#endif
+			amcm_enable();
 		WRITE_VPP_REG_BITS(SRSHARP0_PK_NR_ENABLE, 1, 1, 1);
 		WRITE_VPP_REG_BITS(SRSHARP1_PK_NR_ENABLE, 1, 1, 1);
 
@@ -3452,14 +3460,9 @@ static const char *amvecm_debug_usage_str = {
 	"echo vpp_mtx vd1_12 rgb2yuv > /sys/class/amvecm/debug; 12bit vd1 mtx\n"
 	"echo vpp_mtx vd1_12 yuv2rgb > /sys/class/amvecm/debug; 12bit vd1 mtx\n"
 	"echo bitdepth 10/12/other-num > /sys/class/amvecm/debug; config data path\n"
-	"echo dolby_config 0/1/2.. > /sys/class/amvecm/debug; dolby dma table config\n"
-	"echo dolby_crc 0/1 > /sys/class/amvecm/debug; dolby_crc insert or clr\n"
 	"echo datapath_config param1(D) param2(D) > /sys/class/amvecm/debug; config data path\n"
 	"echo datapath_status > /sys/class/amvecm/debug; data path status\n"
-	"echo dolby_dma index(D) value(H) > /sys/class/amvecm/debug; dolby dma table modify\n"
 	"echo clip_config 0/1/2/.. 0/1/... 0/1 > /sys/class/amvecm/debug; config clip\n"
-	"echo dv_efuse > /sys/class/amvecm/debug; get dv efuse info\n"
-	"echo dv_el > /sys/class/amvecm/debug; get dv enhanced layer info\n"
 };
 static ssize_t amvecm_debug_show(struct class *cla,
 		struct class_attribute *attr, char *buf)
@@ -3749,63 +3752,6 @@ static ssize_t amvecm_debug_store(struct class *cla,
 	return count;
 }
 
-/* supported mode: IPT_TUNNEL/HDR10/SDR10 */
-static const int dv_mode_table[6] = {
-	5, /*DOLBY_VISION_OUTPUT_MODE_BYPASS*/
-	0, /*DOLBY_VISION_OUTPUT_MODE_IPT*/
-	1, /*DOLBY_VISION_OUTPUT_MODE_IPT_TUNNEL*/
-	2, /*DOLBY_VISION_OUTPUT_MODE_HDR10*/
-	3, /*DOLBY_VISION_OUTPUT_MODE_SDR10*/
-	4, /*DOLBY_VISION_OUTPUT_MODE_SDR8*/
-};
-
-static const char dv_mode_str[6][12] = {
-	"IPT",
-	"IPT_TUNNEL",
-	"HDR10",
-	"SDR10",
-	"SDR8",
-	"BYPASS"
-};
-
-static ssize_t amvecm_dv_mode_show(struct class *cla,
-			struct class_attribute *attr, char *buf)
-{
-	pr_info("usage: echo mode > /sys/class/amvecm/dv_mode\n");
-	pr_info("\tDOLBY_VISION_OUTPUT_MODE_BYPASS		0\n");
-	pr_info("\tDOLBY_VISION_OUTPUT_MODE_IPT			1\n");
-	pr_info("\tDOLBY_VISION_OUTPUT_MODE_IPT_TUNNEL	2\n");
-	pr_info("\tDOLBY_VISION_OUTPUT_MODE_HDR10		3\n");
-	pr_info("\tDOLBY_VISION_OUTPUT_MODE_SDR10		4\n");
-	pr_info("\tDOLBY_VISION_OUTPUT_MODE_SDR8		5\n");
-	if (is_dolby_vision_enable())
-		pr_info("current dv_mode = %s\n",
-			dv_mode_str[get_dolby_vision_mode()]);
-	else
-		pr_info("current dv_mode = off\n");
-	return 0;
-}
-
-static ssize_t amvecm_dv_mode_store(struct class *cla,
-			struct class_attribute *attr,
-			const char *buf, size_t count)
-{
-	size_t r;
-	int val;
-
-	r = sscanf(buf, "%x\n", &val);
-	if ((r != 1))
-		return -EINVAL;
-
-	if ((val >= 0) && (val < 6))
-		set_dolby_vision_mode(dv_mode_table[val]);
-	else if (val & 0x200)
-		dolby_vision_dump_struct();
-	else if (val & 0x70)
-		dolby_vision_dump_setting(val);
-	return count;
-}
-
 static const char *amvecm_reg_usage_str = {
 	"Usage:\n"
 	"echo rv addr(H) > /sys/class/amvecm/reg;\n"
@@ -3948,6 +3894,9 @@ static void amvecm_gamma_init(bool en)
 		amve_write_gamma_table(
 					data,
 					H_SEL_B);
+
+		WRITE_VPP_REG_BITS(L_GAMMA_CNTL_PORT,
+				1, GAMMA_EN, 1);
 	}
 }
 static void amvecm_wb_init(bool en)
@@ -4086,8 +4035,6 @@ static struct class_attribute amvecm_class_attrs[] = {
 		set_hdr_289lut_show, set_hdr_289lut_store),
 	__ATTR(vpp_demo, 0644,
 		amvecm_vpp_demo_show, amvecm_vpp_demo_store),
-	__ATTR(dv_mode, 0644,
-		amvecm_dv_mode_show, amvecm_dv_mode_store),
 	__ATTR(reg, 0644,
 		amvecm_reg_show, amvecm_reg_store),
 	__ATTR(pq_user_set, 0644,
@@ -4158,10 +4105,16 @@ static void aml_vecm_dt_parse(struct platform_device *pdev)
 	/* init module status */
 	amvecm_wb_init(wb_en);
 	amvecm_gamma_init(gamma_en);
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 	if (!is_dolby_vision_enable())
+#endif
 		WRITE_VPP_REG_BITS(VPP_MISC, 1, 28, 1);
-	if (cm_en)
-		amcm_enable();
+	if (cm_en) {
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
+		if (!is_dolby_vision_enable())
+#endif
+			amcm_enable();
+	}
 	else
 		amcm_disable();
 	/* WRITE_VPP_REG_BITS(VPP_MISC, cm_en, 28, 1); */
@@ -4246,6 +4199,8 @@ static int aml_vecm_probe(struct platform_device *pdev)
 		/* amvecm_vpp_mtx_debug(mtx_sel_dbg, 1);*/
 	} else if (is_meson_txhd_cpu())
 		vpp_set_10bit_datapath1();
+	else if (is_meson_g12a_cpu())
+		vpp_set_12bit_datapath_g12a();
 	memset(&vpp_hist_param.vpp_histgram[0],
 		0, sizeof(unsigned short) * 64);
 	/* box sdr_mode:auto, tv sdr_mode:off */
@@ -4272,8 +4227,6 @@ static int aml_vecm_probe(struct platform_device *pdev)
 	else
 		vlock_en = 0;
 	aml_vecm_dt_parse(pdev);
-	if (is_meson_gxm_cpu())
-		dolby_vision_init_receiver();
 	probe_ok = 1;
 	pr_info("%s: ok\n", __func__);
 	return 0;
@@ -4385,7 +4338,8 @@ static int __init aml_vecm_init(void)
 
 	pr_info("%s:module init\n", __func__);
 	/* remap the hiu bus */
-	if (is_meson_txlx_cpu() || is_meson_txhd_cpu())
+	if (is_meson_txlx_cpu() || is_meson_txhd_cpu() ||
+		is_meson_g12a_cpu())
 		hiu_reg_base = 0xff63c000;
 	else
 		hiu_reg_base = 0xc883c000;

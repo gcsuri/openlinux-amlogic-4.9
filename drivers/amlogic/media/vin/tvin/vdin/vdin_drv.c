@@ -202,6 +202,8 @@ int vdin_open_fe(enum tvin_port_e port, int index,  struct vdin_dev_s *devp)
 	 /* clear color para*/
 	memset(&devp->prop, 0, sizeof(devp->prop));
 
+	/*enable clk*/
+	vdin_clk_onoff(devp, true);
 	vdin_set_default_regmap(devp->addr_offset);
 	/*only for vdin0*/
 	if (devp->urgent_en && (devp->index == 0))
@@ -423,6 +425,7 @@ void vdin_start_dec(struct vdin_dev_s *devp)
 	/*gxbb/gxl/gxm use clkb as vdin clk,
 	 *for clkb is low speed,wich is enough for 1080p process,
 	 *gxtvbb/txl use vpu clk for process 4k
+	 *g12a use vpu clk for process 4K input buf can't output 4k
 	 */
 	if (is_meson_gxl_cpu() || is_meson_gxm_cpu() || is_meson_gxbb_cpu() ||
 		is_meson_txhd_cpu())
@@ -483,6 +486,7 @@ void vdin_start_dec(struct vdin_dev_s *devp)
 	devp->vfp->size = devp->canvas_max_num;
 	vf_pool_init(devp->vfp, devp->vfp->size);
 	vdin_vf_init(devp);
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 	if ((devp->dv.dolby_input & (1 << devp->index)) ||
 		(devp->dv.dv_flag && is_dolby_vision_enable())) {
 		/* config dolby mem base */
@@ -492,27 +496,21 @@ void vdin_start_dec(struct vdin_dev_s *devp)
 		if (vdin_dbg_en)
 			pr_info("vdin start dec dv input config\n");
 	}
-
+#endif
 	devp->abnormal_cnt = 0;
 	devp->last_wr_vfe = NULL;
 	irq_max_count = 0;
 	/* devp->stamp_valid = false; */
 	devp->stamp = 0;
 	devp->cycle = 0;
-	devp->cycle_tag = 0;
 	devp->hcnt64 = 0;
-	devp->hcnt64_tag = 0;
-	devp->vs_cnt_valid = 0;
-	devp->vs_cnt_ignore = 0;
 
 	memset(&devp->parm.histgram[0], 0, sizeof(unsigned short) * 64);
 
 	devp->curr_field_type = vdin_get_curr_field_type(devp);
 	/* configure regs and enable hw */
-#ifdef CONFIG_AML_VPU
 	switch_vpu_mem_pd_vmod(devp->addr_offset?VPU_VIU_VDIN1:VPU_VIU_VDIN0,
 			VPU_MEM_POWER_ON);
-#endif
 
 	vdin_hw_enable(devp->addr_offset);
 	vdin_set_all_regs(devp);
@@ -530,20 +528,24 @@ void vdin_start_dec(struct vdin_dev_s *devp)
 	if (devp->rdma_enable && devp->rdma_handle > 0)
 		devp->flags |= VDIN_FLAG_RDMA_ENABLE;
 #endif
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 	/*only for vdin0;vdin1 used for debug*/
 	if ((devp->dv.dolby_input & (1 << 0)) ||
 		(devp->dv.dv_flag && is_dolby_vision_enable()))
 		vf_reg_provider(&devp->dv.vprov_dv);
 	else
+#endif
 		vf_reg_provider(&devp->vprov);
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 	if ((devp->dv.dolby_input & (1 << devp->index)) ||
 		(devp->dv.dv_flag && is_dolby_vision_enable()))
 		vf_notify_receiver("dv_vdin",
 			VFRAME_EVENT_PROVIDER_START, NULL);
 	else
+#endif
 		vf_notify_receiver(devp->name,
 			VFRAME_EVENT_PROVIDER_START, NULL);
-	if ((devp->parm.port != TVIN_PORT_VIU) ||
+	if ((devp->parm.port != TVIN_PORT_VIU1) ||
 		(viu_hw_irq != 0)) {
 		/*enable irq */
 		enable_irq(devp->irq);
@@ -555,7 +557,7 @@ void vdin_start_dec(struct vdin_dev_s *devp)
 	if (vdin_dbg_en)
 		pr_info("****[%s]ok!****\n", __func__);
 #ifdef CONFIG_AM_TIMESYNC
-	if (devp->parm.port != TVIN_PORT_VIU) {
+	if (devp->parm.port != TVIN_PORT_VIU1) {
 		/*disable audio&video sync used for libplayer*/
 		tsync_set_enable(0);
 		/* enable system_time */
@@ -599,6 +601,7 @@ void vdin_stop_dec(struct vdin_dev_s *devp)
 		((devp->parm.port != TVIN_PORT_CVBS3) ||
 		((devp->flags & VDIN_FLAG_SNOW_FLAG) == 0)))
 		devp->frontend->dec_ops->stop(devp->frontend, devp->parm.port);
+
 	vdin_set_default_regmap(devp->addr_offset);
 	/*only for vdin0*/
 	if (devp->urgent_en && (devp->index == 0))
@@ -606,7 +609,7 @@ void vdin_stop_dec(struct vdin_dev_s *devp)
 
 	/* reset default canvas  */
 	vdin_set_def_wr_canvas(devp);
-#if 1/*def CONFIG_AM_HDMIIN_DV*/
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 	if (((devp->dv.dolby_input & (1 << devp->index)) ||
 		is_dolby_vision_enable()) &&
 		(devp->dv.dv_config == true))
@@ -621,10 +624,8 @@ void vdin_stop_dec(struct vdin_dev_s *devp)
 	vdin_dolby_addr_release(devp, devp->vfp->size);
 
 
-#ifdef CONFIG_AML_VPU
 	switch_vpu_mem_pd_vmod(devp->addr_offset?VPU_VIU_VDIN1:VPU_VIU_VDIN0,
 			VPU_MEM_POWER_DOWN);
-#endif
 	memset(&devp->prop, 0, sizeof(struct tvin_sig_property_s));
 #ifdef CONFIG_AML_RDMA
 	rdma_clear(devp->rdma_handle);
@@ -677,7 +678,7 @@ int start_tvin_service(int no, struct vdin_parm_s  *para)
 		ret = -EBUSY;
 		return ret;
 	}
-	if ((para->port != TVIN_PORT_VIU) ||
+	if ((para->port != TVIN_PORT_VIU1) ||
 		(viu_hw_irq != 0)) {
 		ret = request_irq(devp->irq, vdin_v4l2_isr, IRQF_SHARED,
 				devp->irq_name, (void *)devp);
@@ -685,6 +686,7 @@ int start_tvin_service(int no, struct vdin_parm_s  *para)
 		/*disable vsync irq until vdin configured completely*/
 		disable_irq_nosync(devp->irq);
 	}
+	vdin_clk_onoff(devp, true);
 	/*config the vdin use default value*/
 	vdin_set_default_regmap(devp->addr_offset);
 	/*only for vdin0*/
@@ -711,7 +713,7 @@ int start_tvin_service(int no, struct vdin_parm_s  *para)
 			para->h_active >>= 1;
 		devp->fmt_info_p->h_active  = para->h_active;
 		devp->fmt_info_p->v_active  = para->v_active;
-		if ((devp->parm.port == TVIN_PORT_VIDEO) &&
+		if ((devp->parm.port == TVIN_PORT_VIU1_VIDEO) &&
 			(!(devp->flags & VDIN_FLAG_V4L2_DEBUG))) {
 			devp->fmt_info_p->v_active =
 				((rd(0, VPP_POSTBLEND_VD1_V_START_END) &
@@ -796,7 +798,7 @@ int stop_tvin_service(int no)
 /* #endif */
 	devp->flags &= (~VDIN_FLAG_DEC_OPENED);
 	devp->flags &= (~VDIN_FLAG_DEC_STARTED);
-	if ((devp->parm.port != TVIN_PORT_VIU) ||
+	if ((devp->parm.port != TVIN_PORT_VIU1) ||
 		(viu_hw_irq != 0)) {
 		free_irq(devp->irq, (void *)devp);
 		devp->flags &= (~VDIN_FLAG_ISR_REQ);
@@ -844,13 +846,13 @@ static int vdin_ioctl_fe(int no, struct fe_arg_s *parm)
 }
 
 /*
- * if parm.port is TVIN_PORT_VIU,call vdin_v4l2_isr
+ * if parm.port is TVIN_PORT_VIU1,call vdin_v4l2_isr
  *	vdin_v4l2_isr is used to the sample
  *	v4l2 application such as camera,viu
  */
 static void vdin_rdma_isr(struct vdin_dev_s *devp)
 {
-	if (devp->parm.port == TVIN_PORT_VIU)
+	if (devp->parm.port == TVIN_PORT_VIU1)
 		vdin_v4l2_isr(devp->irq, devp);
 }
 
@@ -968,7 +970,6 @@ void vdin_resume_dec(struct vdin_dev_s *devp)
 {
 	vdin_hw_enable(devp->addr_offset);
 }
-
 /*register provider & notify receiver */
 void vdin_vf_reg(struct vdin_dev_s *devp)
 {
@@ -1234,12 +1235,14 @@ irqreturn_t vdin_isr(int irq, void *dev_id)
 			vdin_vf_disp_mode_update(devp->last_wr_vfe, devp->vfp);
 
 		devp->last_wr_vfe = NULL;
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 		if (((devp->dv.dolby_input & (1 << devp->index)) ||
 			(devp->dv.dv_flag && is_dolby_vision_enable())) &&
 			(devp->dv.dv_config == true))
 			vf_notify_receiver("dv_vdin",
 				VFRAME_EVENT_PROVIDER_VFRAME_READY, NULL);
 		else
+#endif
 			vf_notify_receiver(devp->name,
 				VFRAME_EVENT_PROVIDER_VFRAME_READY, NULL);
 	}
@@ -1253,16 +1256,6 @@ irqreturn_t vdin_isr(int irq, void *dev_id)
 
 	devp->hcnt64 = vdin_get_meas_hcnt64(offset);
 
-	/* ignore invalid vs base on the continuous fields
-	 * different cnt to void screen flicker
-	 */
-	if (vdin_check_vs(devp) &&
-		(!(isr_flag & VDIN_BYPASS_VSYNC_CHECK))
-		&& (!(devp->flags & VDIN_FLAG_SNOW_FLAG))) {
-		devp->vdin_irq_flag = 5;
-		vdin_drop_cnt++;
-		goto irq_handled;
-	}
 	sm_ops = devp->frontend->sm_ops;
 
 	last_field_type = devp->curr_field_type;
@@ -1371,12 +1364,14 @@ irqreturn_t vdin_isr(int irq, void *dev_id)
 		vdin_drop_cnt++;
 		goto irq_handled;
 	}
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 	if (((devp->dv.dolby_input & (1 << devp->index)) ||
 		(devp->dv.dv_flag && is_dolby_vision_enable())) &&
 		(devp->dv.dv_config == true))
 		vdin2nr = vf_notify_receiver("dv_vdin",
 			VFRAME_EVENT_PROVIDER_QUREY_VDIN2NR, NULL);
 	else
+#endif
 		vdin2nr = vf_notify_receiver(devp->name,
 			VFRAME_EVENT_PROVIDER_QUREY_VDIN2NR, NULL);
 	/*if vdin-nr,di must get
@@ -1482,12 +1477,14 @@ irqreturn_t vdin_isr(int irq, void *dev_id)
 	next_wr_vfe->vf.ready_jiffies64 = jiffies_64;
 
 	if (!(devp->flags&VDIN_FLAG_RDMA_ENABLE) || (devp->game_mode == true)) {
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 		if (((devp->dv.dolby_input & (1 << devp->index)) ||
 			(devp->dv.dv_flag && is_dolby_vision_enable())) &&
 			(devp->dv.dv_config == true))
 			vf_notify_receiver("dv_vdin",
 				VFRAME_EVENT_PROVIDER_VFRAME_READY, NULL);
 		else
+#endif
 			vf_notify_receiver(devp->name,
 				VFRAME_EVENT_PROVIDER_VFRAME_READY, NULL);
 	}
@@ -1557,7 +1554,7 @@ irqreturn_t vdin_v4l2_isr(int irq, void *dev_id)
 		goto irq_handled;
 	}
 
-	if ((devp->parm.port == TVIN_PORT_VIU) ||
+	if ((devp->parm.port == TVIN_PORT_VIU1) ||
 		(devp->parm.port == TVIN_PORT_CAMERA)) {
 		if (!vdin_write_done_check(offset, devp)) {
 			if (vdin_dbg_en)
@@ -2385,8 +2382,15 @@ static int vdin_drv_probe(struct platform_device *pdev)
 	/* @todo vdin_addr_offset */
 	if (is_meson_gxbb_cpu() && vdevp->index)
 		vdin_addr_offset[vdevp->index] = 0x70;
+	else if (is_meson_g12a_cpu() && vdevp->index)
+		vdin_addr_offset[vdevp->index] = 0x100;
 	vdevp->addr_offset = vdin_addr_offset[vdevp->index];
 	vdevp->flags = 0;
+	/*canvas align number*/
+	if (is_meson_g12a_cpu())
+		vdevp->canvas_align = 64;
+	else
+		vdevp->canvas_align = 32;
 	/*mif reset patch for vdin wr ram bug on gxtvbb*/
 	if (is_meson_gxtvbb_cpu())
 		enable_reset = 1;
@@ -2435,7 +2439,6 @@ static int vdin_drv_probe(struct platform_device *pdev)
 		} else {
 			clk_set_parent(vdevp->msr_clk, clk);
 			vdevp->msr_clk_val = clk_get_rate(vdevp->msr_clk);
-			clk_put(vdevp->msr_clk);
 			pr_info("%s: vdin msr clock is %d MHZ\n", __func__,
 					vdevp->msr_clk_val/1000000);
 		}
@@ -2462,7 +2465,6 @@ static int vdin_drv_probe(struct platform_device *pdev)
 			if (!IS_ERR(vdevp->msr_clk)) {
 				vdevp->msr_clk_val =
 						clk_get_rate(vdevp->msr_clk);
-				clk_put(vdevp->msr_clk);
 				pr_info("%s: vdin[%d] clock is %d MHZ\n",
 						__func__, vdevp->index,
 						vdevp->msr_clk_val/1000000);
@@ -2473,6 +2475,7 @@ static int vdin_drv_probe(struct platform_device *pdev)
 	}
 	/*disable vdin hardware*/
 	vdin_enable_module(vdevp->addr_offset, false);
+	vdin_clk_onoff(vdevp, false);
 	/*enable auto cutwindow for atv*/
 	if (vdevp->index == 0) {
 		vdevp->auto_cutwindow_en = 1;

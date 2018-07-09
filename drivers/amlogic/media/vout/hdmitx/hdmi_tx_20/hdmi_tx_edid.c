@@ -205,13 +205,6 @@ void Edid_DecodeStandardTiming(struct hdmitx_info *info,
 }
 
 /* ----------------------------------------------------------- */
-void Edid_CompareTimingDescriptors(struct hdmitx_info *info,
-	unsigned char *Data)
-{
-}
-
-
-/* ----------------------------------------------------------- */
 void Edid_ParseCEADetailedTimingDescriptors(struct hdmitx_info *info,
 	unsigned char blk_mun, unsigned char BaseAddr,
 	unsigned char *buff)
@@ -219,7 +212,6 @@ void Edid_ParseCEADetailedTimingDescriptors(struct hdmitx_info *info,
 	unsigned char index_edid;
 
 	for (index_edid = 0; index_edid < blk_mun; index_edid++) {
-		Edid_CompareTimingDescriptors(info, &buff[BaseAddr]);
 		BaseAddr += 18;
 		/* there is not the TimingDescriptors */
 		if ((BaseAddr + 18) > 0x7d)
@@ -767,81 +759,147 @@ static void Edid_ParsingVendSpec(struct rx_cap *pRXCap,
 {
 	struct dv_info *dv = &pRXCap->dv_info;
 	unsigned char *dat = buf;
-	unsigned char len;
 	unsigned char pos = 0;
 
-	len = dat[pos] & 0x1f;
+	memset(dv, 0, sizeof(struct dv_info));
+	dv->block_flag = CORRECT;
+	dv->length = dat[pos] & 0x1f;
+	memcpy(dv->rawdata, dat, dv->length + 1);
 	pos++;
 
 	if (dat[pos] != 1) {
-		pr_info(EDID "parsing fail %s[%d]\n", __func__,
+		pr_info("hdmitx: edid: parsing fail %s[%d]\n", __func__,
 			__LINE__);
-	} else {
-	pos++;
+		return;
+	}
 
+	pos++;
 	dv->ieeeoui = dat[pos++];
 	dv->ieeeoui += dat[pos++] << 8;
 	dv->ieeeoui += dat[pos++] << 16;
+	if (dv->ieeeoui != DV_IEEE_OUI) {
+		dv->block_flag = ERROR_LENGTH;
+		return;
+	}
 
 	dv->ver = (dat[pos] >> 5) & 0x7;
-	/* Refer to DV 2.6 Page 11 */
+	/* Refer to DV 2.9 Page 27 */
 	if (dv->ver == 0) {
-		dv->sup_yuv422_12bit = dat[pos] & 0x1;
-		dv->sup_2160p60hz = (dat[pos] >> 1) & 0x1;
-		dv->sup_global_dimming = (dat[pos] >> 2) & 0x1;
-		pos++;
-		dv->vers.ver0.chrom_red_primary_x =
-			(dat[pos+1] << 8) | (dat[pos] >> 4);
-		dv->vers.ver0.chrom_red_primary_y =
-			(dat[pos+2] << 8) | (dat[pos] & 0xf);
-		pos += 3;
-		dv->vers.ver0.chrom_green_primary_x =
-			(dat[pos+1] << 8) | (dat[pos] >> 4);
-		dv->vers.ver0.chrom_green_primary_y =
-			(dat[pos+2] << 8) | (dat[pos] & 0xf);
-		pos += 3;
-		dv->vers.ver0.chrom_blue_primary_x =
-			(dat[pos+1] << 8) | (dat[pos] >> 4);
-		dv->vers.ver0.chrom_blue_primary_y =
-			(dat[pos+2] << 8) | (dat[pos] & 0xf);
-		pos += 3;
-		dv->vers.ver0.chrom_white_primary_x =
-			(dat[pos+1] << 8) | (dat[pos] >> 4);
-		dv->vers.ver0.chrom_white_primary_y =
-			(dat[pos+2] << 8) | (dat[pos] & 0xf);
-		pos += 3;
-		dv->vers.ver0.target_min_pq =
-			(dat[pos+1] << 8) | (dat[pos] >> 4);
-		dv->vers.ver0.target_max_pq =
-			(dat[pos+2] << 8) | (dat[pos] & 0xf);
-		pos += 3;
-		dv->vers.ver0.dm_major_ver = dat[pos] >> 4;
-		dv->vers.ver0.dm_minor_ver = dat[pos] & 0xf;
-		pos++;
-	}
-	/* Refer to DV 2.6 Page 14 */
-	if (dv->ver == 1) {
-		dv->vers.ver1.dm_version = (dat[pos] >> 2) & 0x7;
-		dv->sup_yuv422_12bit = dat[pos] & 0x1;
-		dv->sup_2160p60hz = (dat[pos] >> 1) & 0x1;
-		pos++;
-		dv->sup_global_dimming = dat[pos] & 0x1;
-		dv->vers.ver1.target_max_lum = dat[pos] >> 1;
-		pos++;
-		dv->colorimetry = dat[pos] & 0x1;
-		dv->vers.ver1.target_min_lum = dat[pos] >> 1;
-		pos += 2; /* byte8 is reserved as 0 */
-		dv->vers.ver1.chrom_red_primary_x = dat[pos++];
-		dv->vers.ver1.chrom_red_primary_y = dat[pos++];
-		dv->vers.ver1.chrom_green_primary_x = dat[pos++];
-		dv->vers.ver1.chrom_green_primary_y = dat[pos++];
-		dv->vers.ver1.chrom_blue_primary_x = dat[pos++];
-		dv->vers.ver1.chrom_blue_primary_y = dat[pos++];
-	}
+		if (dv->length == 0x19) {
+			dv->sup_yuv422_12bit = dat[pos] & 0x1;
+			dv->sup_2160p60hz = (dat[pos] >> 1) & 0x1;
+			dv->sup_global_dimming = (dat[pos] >> 2) & 0x1;
+			pos++;
+			dv->Rx =
+				(dat[pos+1] << 4) | (dat[pos] >> 4);
+			dv->Ry =
+				(dat[pos+2] << 4) | (dat[pos] & 0xf);
+			pos += 3;
+			dv->Gx =
+				(dat[pos+1] << 4) | (dat[pos] >> 4);
+			dv->Gy =
+				(dat[pos+2] << 4) | (dat[pos] & 0xf);
+			pos += 3;
+			dv->Bx =
+				(dat[pos+1] << 4) | (dat[pos] >> 4);
+			dv->By =
+				(dat[pos+2] << 4) | (dat[pos] & 0xf);
+			pos += 3;
+			dv->Wx =
+				(dat[pos+1] << 4) | (dat[pos] >> 4);
+			dv->Wy =
+				(dat[pos+2] << 4) | (dat[pos] & 0xf);
+			pos += 3;
+			dv->tminPQ =
+				(dat[pos+1] << 4) | (dat[pos] >> 4);
+			dv->tmaxPQ =
+				(dat[pos+2] << 4) | (dat[pos] & 0xf);
+			pos += 3;
+			dv->dm_major_ver = dat[pos] >> 4;
+			dv->dm_minor_ver = dat[pos] & 0xf;
+			pos++;
+		} else
+			dv->block_flag = ERROR_LENGTH;
 	}
 
-	if (pos > len)
+	if (dv->ver == 1) {
+		if (dv->length == 0x0B) {/* Refer to DV 2.9 Page 33 */
+			dv->dm_version = (dat[pos] >> 2) & 0x7;
+			dv->sup_yuv422_12bit = dat[pos] & 0x1;
+			dv->sup_2160p60hz = (dat[pos] >> 1) & 0x1;
+			pos++;
+			dv->sup_global_dimming = dat[pos] & 0x1;
+			dv->tmaxLUM = dat[pos] >> 1;
+			pos++;
+			dv->colorimetry = dat[pos] & 0x1;
+			dv->tminLUM = dat[pos] >> 1;
+			pos++;
+			dv->low_latency = dat[pos] & 0x3;
+			dv->Bx = 0x20 | ((dat[pos] >> 5) & 0x7);
+			dv->By = 0x08 | ((dat[pos] >> 2) & 0x7);
+			pos++;
+			dv->Gx = 0x00 | (dat[pos] >> 1);
+			dv->Ry = 0x40 | ((dat[pos] & 0x1) |
+				((dat[pos + 1] & 0x1) << 1) |
+				((dat[pos + 2] & 0x3) << 2));
+			pos++;
+			dv->Gy = 0x80 | (dat[pos] >> 1);
+			pos++;
+			dv->Rx = 0xA0 | (dat[pos] >> 3);
+			pos++;
+		} else if (dv->length == 0x0E) {
+			dv->dm_version = (dat[pos] >> 2) & 0x7;
+			dv->sup_yuv422_12bit = dat[pos] & 0x1;
+			dv->sup_2160p60hz = (dat[pos] >> 1) & 0x1;
+			pos++;
+			dv->sup_global_dimming = dat[pos] & 0x1;
+			dv->tmaxLUM = dat[pos] >> 1;
+			pos++;
+			dv->colorimetry = dat[pos] & 0x1;
+			dv->tminLUM = dat[pos] >> 1;
+			pos += 2; /* byte8 is reserved as 0 */
+			dv->Rx = dat[pos++];
+			dv->Ry = dat[pos++];
+			dv->Gx = dat[pos++];
+			dv->Gy = dat[pos++];
+			dv->Bx = dat[pos++];
+			dv->By = dat[pos++];
+		} else
+			dv->block_flag = ERROR_LENGTH;
+	}
+	if (dv->ver == 2) {
+		if (dv->length == 0x0B) {
+			dv->sup_2160p60hz = 0x1;/*default*/
+			dv->dm_version = (dat[pos] >> 2) & 0x7;
+			dv->sup_yuv422_12bit = dat[pos] & 0x1;
+			dv->sup_backlight_control = (dat[pos] >> 1) & 0x1;
+			pos++;
+			dv->sup_global_dimming = (dat[pos] >> 2) & 0x1;
+			dv->backlt_min_luma = dat[pos] & 0x3;
+			dv->tminPQ = dat[pos] >> 3;
+			pos++;
+			dv->Interface = dat[pos] & 0x3;
+			dv->tmaxPQ = dat[pos] >> 3;
+			pos++;
+			dv->sup_10b_12b_444 = ((dat[pos] & 0x1) << 1) |
+				(dat[pos + 1] & 0x1);
+			dv->Gx = 0x00 | (dat[pos] >> 1);
+			pos++;
+			dv->Gy = 0x80 | (dat[pos] >> 1);
+			pos++;
+			dv->Rx = 0xA0 | (dat[pos] >> 3);
+			dv->Bx = 0x20 | (dat[pos] & 0x7);
+			pos++;
+			dv->Ry = 0x40  | (dat[pos] >> 3);
+			dv->By = 0x08  | (dat[pos] & 0x7);
+			pos++;
+		} else
+			dv->block_flag = ERROR_LENGTH;
+	}
+
+	if (pos > dv->length)
 		pr_info("hdmitx: edid: maybe invalid dv%d data\n", dv->ver);
+	return;
 }
 
 /* ----------------------------------------------------------- */
@@ -992,7 +1050,7 @@ static int Edid_ParsingY420CMDBBlock(struct hdmitx_info *info,
 		info->bitmap_valid = 1;
 	}
 	while (pos < data_end) {
-		if (i < VIC_MAX_NUM)
+		if (i < Y420CMDB_MAX)
 			info->y420cmdb_bitmap[i] = buf[pos];
 		pos++;
 		i++;
@@ -1320,24 +1378,23 @@ static int hdmitx_edid_block_parse(struct hdmitx_dev *hdmitx_device,
 			offset++;
 			if ((BlockBuf[offset] == 0x03) &&
 				(BlockBuf[offset+1] == 0x0c) &&
-				(BlockBuf[offset+2] == 0x00))
+				(BlockBuf[offset+2] == 0x00)) {
 				pRXCap->IEEEOUI = 0x000c03;
-			else
-				goto case_hf;
-			pRXCap->ColorDeepSupport =
-				(unsigned long)BlockBuf[offset+5];
-			pRXCap->Max_TMDS_Clock1 =
-				(unsigned long)BlockBuf[offset+6];
-			if (count > 7) {
-				tmp = BlockBuf[offset+7];
-				idx = offset + 8;
-				if (tmp & (1<<6))
-					idx += 2;
-				if (tmp & (1<<7))
-					idx += 2;
-				if (tmp & (1<<5)) {
-					idx += 1;
-					/* valid 4k */
+				pRXCap->ColorDeepSupport =
+					(count > 5) ? BlockBuf[offset+5] : 0;
+				pRXCap->Max_TMDS_Clock1 =
+					(count > 6) ? BlockBuf[offset+6] : 0;
+
+				if (count > 7) {
+					tmp = BlockBuf[offset+7];
+					idx = offset + 8;
+					if (tmp & (1<<6))
+						idx += 2;
+					if (tmp & (1<<7))
+						idx += 2;
+					if (tmp & (1<<5)) {
+						idx += 1;
+						/* valid 4k */
 					if (BlockBuf[idx] & 0xe0) {
 						hdmitx_edid_4k2k_parse(
 							pRXCap,
@@ -1351,24 +1408,23 @@ static int hdmitx_edid_block_parse(struct hdmitx_dev *hdmitx_device,
 							&BlockBuf[offset+7],
 							count - 7);
 					}
+					}
 				}
-			}
-			goto case_next;
-case_hf:
-			if ((BlockBuf[offset] == 0xd8) &&
+			} else if ((BlockBuf[offset] == 0xd8) &&
 				(BlockBuf[offset+1] == 0x5d) &&
-				(BlockBuf[offset+2] == 0xc4))
+				(BlockBuf[offset+2] == 0xc4)) {
 				pRXCap->HF_IEEEOUI = 0xd85dc4;
-			pRXCap->Max_TMDS_Clock2 = BlockBuf[offset+4];
-			pRXCap->scdc_present =
-				!!(BlockBuf[offset+5] & (1 << 7));
-			pRXCap->scdc_rr_capable =
-				!!(BlockBuf[offset+5] & (1 << 6));
-			pRXCap->lte_340mcsc_scramble =
-				!!(BlockBuf[offset+5] & (1 << 3));
-			set_vsdb_dc_420_cap(&hdmitx_device->RXCap,
-				&BlockBuf[offset]);
-case_next:
+				pRXCap->Max_TMDS_Clock2 = BlockBuf[offset+4];
+				pRXCap->scdc_present =
+					!!(BlockBuf[offset+5] & (1 << 7));
+				pRXCap->scdc_rr_capable =
+					!!(BlockBuf[offset+5] & (1 << 6));
+				pRXCap->lte_340mcsc_scramble =
+					!!(BlockBuf[offset+5] & (1 << 3));
+				set_vsdb_dc_420_cap(&hdmitx_device->RXCap,
+					&BlockBuf[offset]);
+			}
+
 			offset += count; /* ignore the remaind. */
 			break;
 
@@ -1967,6 +2023,8 @@ int hdmitx_edid_parse(struct hdmitx_dev *hdmitx_device)
 				(pRXCap->hdr_sup_eotf_hdr << 1) |
 				(pRXCap->hdr_sup_eotf_smpte_st_2084 << 2) |
 				(pRXCap->hdr_sup_eotf_hlg << 3);
+			info->hdr_info.colorimetry_support =
+				pRXCap->colorimetry_data;
 			info->hdr_info.lumi_max = pRXCap->hdr_lum_max;
 			info->hdr_info.lumi_avg = pRXCap->hdr_lum_avg;
 			info->hdr_info.lumi_min = pRXCap->hdr_lum_min;
@@ -2174,6 +2232,8 @@ bool hdmitx_edid_check_valid_mode(struct hdmitx_dev *hdev,
 			return 0;
 		if (pRXCap->dc_y444 && pRXCap->dc_30bit)
 			rx_y444_max_dc = COLORDEPTH_30B;
+		if (pRXCap->dc_y444 && pRXCap->dc_36bit)
+			rx_y444_max_dc = COLORDEPTH_36B;
 		if (para->cd <= rx_y444_max_dc)
 			valid = 1;
 		else
@@ -2186,6 +2246,8 @@ bool hdmitx_edid_check_valid_mode(struct hdmitx_dev *hdev,
 			return 0;
 		if (pRXCap->dc_y444 && pRXCap->dc_30bit)
 			rx_y422_max_dc = COLORDEPTH_30B;
+		if (pRXCap->dc_y444 && pRXCap->dc_36bit)
+			rx_y422_max_dc = COLORDEPTH_36B;
 		if (para->cd <= rx_y422_max_dc)
 			valid = 1;
 		else
@@ -2196,6 +2258,8 @@ bool hdmitx_edid_check_valid_mode(struct hdmitx_dev *hdev,
 		/* Always assume RX supports RGB444 */
 		if (pRXCap->dc_30bit)
 			rx_rgb_max_dc = COLORDEPTH_30B;
+		if (pRXCap->dc_36bit)
+			rx_rgb_max_dc = COLORDEPTH_36B;
 		if (para->cd <= rx_rgb_max_dc)
 			valid = 1;
 		else
@@ -2205,6 +2269,8 @@ bool hdmitx_edid_check_valid_mode(struct hdmitx_dev *hdev,
 	if (para->cs == COLORSPACE_YUV420) {
 		if (pRXCap->dc_30bit_420)
 			rx_y420_max_dc = COLORDEPTH_30B;
+		if (pRXCap->dc_36bit_420)
+			rx_y420_max_dc = COLORDEPTH_36B;
 		if (para->cd <= rx_y420_max_dc)
 			valid = 1;
 		else
@@ -2213,32 +2279,6 @@ bool hdmitx_edid_check_valid_mode(struct hdmitx_dev *hdev,
 	}
 
 	return valid;
-}
-
-/*
- * For some TVs, their EDID declare support 2160p60hz(>3.4Gbps) on SVDs,
- * but no HF_IEEEOUT, so consider they don't support that format.
- */
-static enum hdmi_vic hdmitx_edid_recheck_format(struct hdmitx_dev *hdev,
-	enum hdmi_vic vic)
-{
-	struct rx_cap *pRXCap = &(hdev->RXCap);
-
-	switch (vic) {
-	case HDMI_3840x2160p50_16x9:
-	case HDMI_3840x2160p60_16x9:
-	case HDMI_4096x2160p50_256x135:
-	case HDMI_4096x2160p60_256x135:
-	case HDMI_3840x2160p50_64x27:
-	case HDMI_3840x2160p60_64x27:
-		break;
-	default:
-		return vic;
-	}
-
-	if (!pRXCap->HF_IEEEOUI || ((pRXCap->Max_TMDS_Clock2 * 5) < 340))
-		vic = HDMI_Unknown;
-	return vic;
 }
 
 /* force_flag: 0 means check with RX's edid */
@@ -2260,7 +2300,6 @@ enum hdmi_vic hdmitx_edid_get_VIC(struct hdmitx_dev *hdev,
 				vic = HDMI_Unknown;
 		}
 	}
-	vic = hdmitx_edid_recheck_format(hdev, vic);
 	return vic;
 }
 

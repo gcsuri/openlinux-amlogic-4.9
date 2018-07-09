@@ -28,12 +28,12 @@
 
 void pdm_enable(int is_enable)
 {
-	if (is_enable)
+	if (is_enable) {
 		aml_pdm_update_bits(
 			PDM_CTRL,
 			0x1 << 31,
 			is_enable << 31);
-	else {
+	} else {
 		aml_pdm_update_bits(
 			PDM_CTRL,
 			0x1 << 31 | 0x1 << 16,
@@ -147,22 +147,22 @@ static void aml_pdm_filters_config(int osr,
 	case 32:
 		hcic_dn_rate = 0x4;
 		hcic_gain	 = 0x80;
-		hcic_shift	 = 0xa;
+		hcic_shift	 = 0xe;
 		break;
 	case 40:
 		hcic_dn_rate = 0x5;
-		hcic_gain	 = 0x54;
-		hcic_shift	 = 0xb;
+		hcic_gain	 = 0x6b;
+		hcic_shift	 = 0x10;
 		break;
 	case 48:
 		hcic_dn_rate = 0x6;
-		hcic_gain	 = 0x43;
-		hcic_shift	 = 0xc;
+		hcic_gain	 = 0x78;
+		hcic_shift	 = 0x12;
 		break;
 	case 56:
 		hcic_dn_rate = 0x7;
-		hcic_gain	 = 0x7d;
-		hcic_shift	 = 0xe;
+		hcic_gain	 = 0x51;
+		hcic_shift	 = 0x13;
 		break;
 	case 64:
 		hcic_dn_rate = 0x0008;
@@ -358,7 +358,8 @@ void aml_pdm_filter_ctrl(int osr, int mode)
 	case 48:
 	case 56:
 	default:
-		pr_info("default mode 1, osr 64, 48k\n");
+		pr_info("osr :%d , lpf2 uses default parameters with osr64\n",
+			osr);
 		lpf2_coeff = lpf2_osr64;
 		break;
 	}
@@ -421,4 +422,36 @@ void aml_pdm_filter_ctrl(int osr, int mode)
 		lpf3_len, lpf3_coeff
 		);
 
+}
+
+int pdm_get_mute_value(void)
+{
+	return aml_pdm_read(PDM_MUTE_VALUE);
+}
+
+void pdm_set_mute_value(int val)
+{
+	aml_pdm_write(PDM_MUTE_VALUE, val);
+}
+
+int pdm_get_mute_channel(void)
+{
+	int val = aml_pdm_read(PDM_CTRL);
+
+	if (!((val & 20000) >> 17))
+		pr_warn_once("pdm mute is not enable\n");
+
+	return (val & (0xff << 20));
+}
+
+void pdm_set_mute_channel(int mute_chmask)
+{
+	int mute_en = 0;
+
+	if (mute_chmask)
+		mute_en = 1;
+
+	aml_pdm_update_bits(PDM_CTRL,
+		(0xff << 20 | 0x1 << 17),
+		(mute_chmask << 20 | mute_en << 17));
 }

@@ -159,8 +159,8 @@
 	meson_suspend:pm{
 		compatible = "amlogic, pm";
 		device_name = "aml_pm";
-		reg = <0x0 0xc81000a8 0x0 0x4
-			0x0 0xc810023c 0x0 0x4>;
+		reg = <0x0 0xc81000a8 0x0 0x4>,
+			<0x0 0xc810023c 0x0 0x4>;
 	};
 
 	secmon {
@@ -287,7 +287,7 @@
 			<&clkc CLKID_VPU_P1_COMP>,
 			<&clkc CLKID_VPU_MUX>;
 		clock-names = "vapb_clk",
-			"vpu_intr",
+			"vpu_intr_gate",
 			"gp_pll",
 			"vpu_clk0",
 			"vpu_clk1",
@@ -1029,7 +1029,7 @@
 	aml_dma {
 		compatible = "amlogic,aml_gxl_dma";
 		reg = <0x0 0xc883e000 0x0 0x28>;
-		interrupts = <0 180 1>;
+		interrupts = <0 188 1>;
 
 		aml_aes {
 			compatible = "amlogic,aes_dma";

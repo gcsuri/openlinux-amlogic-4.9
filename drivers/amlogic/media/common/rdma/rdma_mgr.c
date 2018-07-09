@@ -39,6 +39,7 @@
 
 #include <linux/amlogic/media/utils/vdec_reg.h>
 #include <linux/amlogic/media/rdma/rdma_mgr.h>
+#include <linux/amlogic/media/vpu/vpu.h>
 #include "rdma.h"
 
 #define DRIVER_NAME "amlogic-rdma"
@@ -772,6 +773,8 @@ static int rdma_probe(struct platform_device *pdev)
 
 	pr_info("%s\n", __func__);
 
+	switch_vpu_mem_pd_vmod(VPU_RDMA, VPU_MEM_POWER_ON);
+
 	WRITE_VCBUS_REG(VPU_VDISP_ASYNC_HOLD_CTRL, 0x18101810);
 	WRITE_VCBUS_REG(VPU_VPUARB2_ASYNC_HOLD_CTRL, 0x18101810);
 
@@ -787,8 +790,9 @@ static int rdma_probe(struct platform_device *pdev)
 		info->rdma_ins[i].prev_trigger_type = 0;
 		info->rdma_ins[i].rdma_write_count = 0;
 	}
-	WRITE_MPEG_REG(RESET4_REGISTER,
-				   (1 << 5));
+
+	WRITE_MPEG_REG(RESET4_REGISTER, (1 << 5));
+
 #ifdef SKIP_OSD_CHANNEL
 	info->rdma_ins[3].used = 1; /* OSD driver uses this channel */
 #endif
@@ -825,14 +829,14 @@ static int rdma_probe(struct platform_device *pdev)
 static int rdma_remove(struct platform_device *pdev)
 {
 	pr_error("RDMA driver removed.\n");
-
+	switch_vpu_mem_pd_vmod(VPU_RDMA, VPU_MEM_POWER_DOWN);
 	return 0;
 }
 
 static const struct of_device_id rdma_dt_match[] = {
 	{
-			.compatible = "amlogic, meson, rdma",
-		},
+		.compatible = "amlogic, meson, rdma",
+	},
 	{},
 };
 
@@ -840,9 +844,9 @@ static struct platform_driver rdma_driver = {
 	.probe = rdma_probe,
 	.remove = rdma_remove,
 	.driver = {
-			.name = "amlogic-rdma",
-			.of_match_table = rdma_dt_match,
-		},
+		.name = "amlogic-rdma",
+		.of_match_table = rdma_dt_match,
+	},
 };
 
 static int __init amrdma_init(void)

@@ -49,38 +49,18 @@ extern unsigned char lcd_debug_print_flag;
 /* ******** div_ctrl ******** */
 #define DIV_CTRL_EDP_DIV1           24 /* [26:24] */
 #define DIV_CTRL_EDP_DIV0           20 /* [23:20] */
-#define DIV_CTRL_DIV_POST           12 /* [14:12] */
-#define DIV_CTRL_DIV_PRE            8 /* [10:8] */
 #define DIV_CTRL_DIV_SEL            8 /* [15:8] */
 #define DIV_CTRL_XD                 0 /* [7:0] */
 
 /* ******** clk_ctrl ******** */
-#define CLK_CTRL_LEVEL              12 /* [14:12] */
-#define CLK_CTRL_FRAC               0  /* [11:0] */
+#define CLK_CTRL_LEVEL              28 /* [30:28] */
+#define CLK_CTRL_FRAC               0  /* [18:0] */
 
 /* **********************************
  * VENC to TCON sync delay
  * **********************************
  */
 #define TTL_DELAY                   13
-
-/* ******** AXG ******** */
-/* bit[15:11] */
-#define BIT_PHY_LANE_AXG        11
-#define PHY_LANE_WIDTH_AXG       5
-
-/* MIPI-DSI */
-#define DSI_LANE_0              (1 << 4)
-#define DSI_LANE_1              (1 << 3)
-#define DSI_LANE_CLK            (1 << 2)
-#define DSI_LANE_2              (1 << 1)
-#define DSI_LANE_3              (1 << 0)
-#define DSI_LANE_COUNT_1        (DSI_LANE_CLK | DSI_LANE_0)
-#define DSI_LANE_COUNT_2        (DSI_LANE_CLK | DSI_LANE_0 | DSI_LANE_1)
-#define DSI_LANE_COUNT_3        (DSI_LANE_CLK | DSI_LANE_0 |\
-					DSI_LANE_1 | DSI_LANE_2)
-#define DSI_LANE_COUNT_4        (DSI_LANE_CLK | DSI_LANE_0 |\
-					DSI_LANE_1 | DSI_LANE_2 | DSI_LANE_3)
 
 
 /* **********************************
@@ -100,6 +80,7 @@ enum lcd_chip_e {
 	LCD_CHIP_GXM,   /* 2 */
 	LCD_CHIP_TXLX,  /* 3 */
 	LCD_CHIP_AXG,   /* 4 */
+	LCD_CHIP_G12A,  /* 5 */
 	LCD_CHIP_MAX,
 };
 
@@ -300,11 +281,15 @@ struct dsi_config_s {
 
 	unsigned int venc_data_width;
 	unsigned int dpi_data_format;
-	unsigned int venc_fmt;
 
 	unsigned char *dsi_init_on;
 	unsigned char *dsi_init_off;
 	unsigned char extern_init;
+
+	unsigned char check_en;
+	unsigned char check_reg;
+	unsigned char check_cnt;
+	unsigned char check_state;
 };
 
 struct lcd_control_config_s {
@@ -396,12 +381,18 @@ struct lcd_duration_s {
 	unsigned int duration_den;
 };
 
+#define LCD_STATUS_IF_ON      (1 << 0)
+#define LCD_STATUS_ENCL_ON    (1 << 1)
+#define LCD_STATUS_VMODE_ACTIVE  (1 << 2)
+#define LCD_STATUS_ON         (LCD_STATUS_IF_ON | LCD_STATUS_ENCL_ON)
+
 struct aml_lcd_drv_s {
 	char *version;
 	struct lcd_data_s *data;
 	unsigned char lcd_mode;
 	unsigned char lcd_status;
 	unsigned char lcd_key_valid;
+	unsigned char lcd_clk_path; /* 0=hpll, 1=gp0_pll */
 	unsigned char lcd_config_load;
 	unsigned char lcd_test_flag;
 	unsigned char lcd_resume_type; /* 0=directly, 1=workqueue */
@@ -421,20 +412,19 @@ struct aml_lcd_drv_s {
 	struct lcd_config_s *lcd_config;
 	struct vinfo_s *lcd_info;
 	struct class *lcd_debug_class;
+
 	int fr_auto_policy;
 	struct lcd_duration_s std_duration;
 
-	void (*vout_server_init)(void);
 	void (*driver_init_pre)(void);
+	void (*driver_disable_post)(void);
 	int (*driver_init)(void);
 	void (*driver_disable)(void);
 	int (*driver_change)(void);
 	void (*module_reset)(void);
-	void (*power_tiny_ctrl)(int status);
-	void (*driver_tiny_enable)(void);
-	void (*driver_tiny_disable)(void);
 	void (*module_tiny_reset)(void);
-	void (*lcd_test_pattern_restore)(void);
+	void (*lcd_screen_black)(void);
+	void (*lcd_screen_restore)(void);
 	void (*power_ctrl)(int status);
 
 	struct workqueue_struct *workqueue;
@@ -443,6 +433,8 @@ struct aml_lcd_drv_s {
 	struct work_struct  lcd_resume_work;
 	struct resource *res_vsync_irq;
 	struct resource *res_vx1_irq;
+
+	struct mutex power_mutex;
 };
 
 extern struct aml_lcd_drv_s *aml_lcd_get_driver(void);

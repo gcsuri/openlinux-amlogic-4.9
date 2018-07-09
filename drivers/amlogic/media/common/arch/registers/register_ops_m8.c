@@ -28,6 +28,8 @@
 	MESON_CPU_MAJOR_ID_GXM, \
 	MESON_CPU_MAJOR_ID_TXL, \
 	MESON_CPU_MAJOR_ID_TXLX, \
+	MESON_CPU_MAJOR_ID_AXG, \
+	MESON_CPU_MAJOR_ID_G12A, \
 			0}
 #define REGISTER_FOR_GXCPU {\
 	MESON_CPU_MAJOR_ID_GXBB, \
@@ -36,6 +38,8 @@
 	MESON_CPU_MAJOR_ID_GXM, \
 	MESON_CPU_MAJOR_ID_TXL, \
 	MESON_CPU_MAJOR_ID_TXLX, \
+	MESON_CPU_MAJOR_ID_AXG, \
+	MESON_CPU_MAJOR_ID_G12A, \
 			0}
 int codec_apb_read(unsigned int reg)
 {
@@ -63,6 +67,7 @@ static struct chip_register_ops m8_ops[] __initdata = {
 	{IO_AIU_BUS, 0, codecio_read_aiubus, codecio_write_aiubus},
 	{IO_DEMUX_BUS, 0, codecio_read_demuxbus, codecio_write_demuxbus},
 	{IO_RESET_BUS, 0, codecio_read_resetbus, codecio_write_resetbus},
+	{IO_EFUSE_BUS, 0, codecio_read_efusebus, codecio_write_efusebus},
 };
 
 static struct chip_register_ops ex_gx_ops[] __initdata = {

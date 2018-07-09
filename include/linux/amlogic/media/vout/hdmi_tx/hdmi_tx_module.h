@@ -32,7 +32,7 @@
 /* chip type */
 #define MESON_CPU_ID_M8B		0
 #define MESON_CPU_ID_GXBB		1
-#define MESON_CPU_ID_GXTVBB	    2
+#define MESON_CPU_ID_GXTVBB	        2
 #define MESON_CPU_ID_GXL		3
 #define MESON_CPU_ID_GXM		4
 #define MESON_CPU_ID_TXL		5
@@ -40,6 +40,7 @@
 #define MESON_CPU_ID_AXG		7
 #define MESON_CPU_ID_GXLX		8
 #define MESON_CPU_ID_TXHD		9
+#define MESON_CPU_ID_G12A		10
 
 /*****************************
  *    hdmitx attr management
@@ -78,7 +79,7 @@ struct rx_cap {
 	unsigned char RxSpeakerAllocation;
 	/*vendor*/
 	unsigned int IEEEOUI;
-	unsigned int Max_TMDS_Clock1; /* HDMI1.4b TMDS_CLK */
+	unsigned char Max_TMDS_Clock1; /* HDMI1.4b TMDS_CLK */
 	unsigned int HF_IEEEOUI;	/* For HDMI Forum */
 	unsigned int Max_TMDS_Clock2; /* HDMI2.0 TMDS_CLK */
 	/* CEA861-F, Table 56, Colorimetry Data Block */
@@ -111,7 +112,7 @@ struct rx_cap {
 	unsigned char physcial_height;
 	unsigned char edid_version;
 	unsigned char edid_revision;
-	unsigned int ColorDeepSupport;
+	unsigned char ColorDeepSupport;
 	unsigned int Video_Latency;
 	unsigned int Audio_Latency;
 	unsigned int Interlaced_Video_Latency;
@@ -211,8 +212,13 @@ enum hdmi_hdr_color {
 
 struct hdmitx_clk_tree_s {
 	/* hdmitx clk tree */
+	struct clk *hdmi_clk_vapb;
+	struct clk *hdmi_clk_vpu;
 	struct clk *hdcp22_tx_skp;
 	struct clk *hdcp22_tx_esm;
+	struct clk *venci_top_gate;
+	struct clk *venci_0_gate;
+	struct clk *venci_1_gate;
 };
 
 #define EDID_MAX_BLOCK              4
@@ -233,6 +239,7 @@ struct hdmitx_dev {
 	struct pinctrl_state *pinctrl_default;
 	struct delayed_work work_hpd_plugin;
 	struct delayed_work work_hpd_plugout;
+	struct delayed_work work_aud_hpd_plug;
 	struct delayed_work work_rxsense;
 	struct work_struct work_internal_intr;
 	struct work_struct work_hdr;
@@ -351,10 +358,12 @@ struct hdmitx_dev {
 	unsigned char hdmi_audio_off_flag;
 	enum hdmi_hdr_transfer hdr_transfer_feature;
 	enum hdmi_hdr_color hdr_color_feature;
+	unsigned int dv_src_feature;
 	unsigned int sdr_hdr_feature;
 	unsigned int flag_3dfp:1;
 	unsigned int flag_3dtb:1;
 	unsigned int flag_3dss:1;
+	unsigned int drm_feature;/*Direct Rander Management*/
 };
 
 #define CMD_DDC_OFFSET          (0x10 << 24)
@@ -413,6 +422,8 @@ struct hdmitx_dev {
 #define CONF_VIDEO_MUTE_OP      (CMD_CONF_OFFSET + 0x1000 + 0x04)
 #define VIDEO_MUTE          0x1
 #define VIDEO_UNMUTE        0x2
+#define CONF_EMP_NUMBER         (CMD_CONF_OFFSET + 0x3000 + 0x00)
+#define CONF_EMP_PHY_ADDR       (CMD_CONF_OFFSET + 0x3000 + 0x01)
 
 /* Audio part */
 #define CONF_CLR_AVI_PACKET     (CMD_CONF_OFFSET + 0x04)
@@ -597,7 +608,6 @@ static inline int hdmitx_event_notifier_unregist(struct notifier_block *nb)
 
 extern void hdmi_set_audio_para(int para);
 extern int get_cur_vout_index(void);
-extern struct vinfo_s *hdmi_get_current_vinfo(void);
 extern void phy_pll_off(void);
 extern int get_hpd_state(void);
 extern void hdmitx_hdcp_do_work(struct hdmitx_dev *hdev);
@@ -614,6 +624,28 @@ extern unsigned int get_hdcp22_base(void);
  */
 extern void hdmitx_audio_mute_op(unsigned int flag);
 extern void hdmitx_video_mute_op(unsigned int flag);
+
+/*
+ * HDMITX HPD HW related operations
+ */
+enum hpd_op {
+	HPD_INIT_DISABLE_PULLUP,
+	HPD_INIT_SET_FILTER,
+	HPD_IS_HPD_MUXED,
+	HPD_MUX_HPD,
+	HPD_UNMUX_HPD,
+	HPD_READ_HPD_GPIO,
+};
+extern int hdmitx_hpd_hw_op(enum hpd_op cmd);
+/*
+ * HDMITX DDC HW related operations
+ */
+enum ddc_op {
+	DDC_INIT_DISABLE_PULL_UP_DN,
+	DDC_MUX_DDC,
+	DDC_UNMUX_DDC,
+};
+extern int hdmitx_ddc_hw_op(enum ddc_op cmd);
 
 #define HDMITX_HWCMD_MUX_HPD_IF_PIN_HIGH       0x3
 #define HDMITX_HWCMD_TURNOFF_HDMIHW           0x4
@@ -654,5 +686,17 @@ struct Hdcp_Sub {
 	unsigned int hdcp_sub_addr_start;
 	unsigned int hdcp_sub_len;
 };
-
+extern void setup_attr(const char *buf);
+extern unsigned int hd_read_reg(unsigned int addr);
+extern void hd_write_reg(unsigned int addr, unsigned int val);
+extern void hd_set_reg_bits(unsigned int addr, unsigned int value,
+		unsigned int offset, unsigned int len);
+extern void hdmitx_wr_reg(unsigned int addr, unsigned int data);
+extern void hdmitx_poll_reg(unsigned int addr, unsigned int val,
+	unsigned long timeout);
+extern void hdmitx_set_reg_bits(unsigned int addr, unsigned int value,
+	unsigned int offset, unsigned int len);
+extern unsigned int hdmitx_rd_reg(unsigned int addr);
+extern void hdmitx_rd_check_reg(unsigned int addr, unsigned int exp_data,
+	unsigned int mask);
 #endif

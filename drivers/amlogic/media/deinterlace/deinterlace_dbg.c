@@ -32,8 +32,10 @@
 #include <linux/uaccess.h>
 #include <linux/ctype.h>
 #include <linux/string.h>
-#include "deinterlace_dbg.h"
 #include "register.h"
+#include "deinterlace_dbg.h"
+#include "di_pps.h"
+#include "nr_downscale.h"
 
 void parse_cmd_params(char *buf_orig, char **parm)
 {
@@ -57,7 +59,7 @@ void parse_cmd_params(char *buf_orig, char **parm)
 void dump_di_reg(void)
 {
 	unsigned int i = 0, base_addr = 0;
-	unsigned int size_reg_addr[57] = {
+	unsigned int size_reg_addr[] = {
 		0x1702, 0x1703, 0x2d01,
 		0x2d01, 0x2d8f, 0x2d08,
 		0x2d09, 0x2f00, 0x2f01,
@@ -76,7 +78,18 @@ void dump_di_reg(void)
 		0x1a53, 0x1a54, 0x1a55,
 		0x1a56, 0x17ea, 0x17eb,
 		0x17ec, 0x17ed, 0x2012,
-		0x2013, 0x2014, 0x2015
+		0x2013, 0x2014, 0x2015,
+		0x37d2, 0x37d3, 0x37d7,
+		0x37d8, 0x37dc, 0x37dd,
+		0x37e1, 0x37e2, 0x37e6,
+		0x37e7, 0x37e9, 0x37ea,
+		0x37ed, 0x37ee, 0x37f1,
+		0x37f2, 0x37f4, 0x37f5,
+		0x37f6, 0x37f8, 0x3751,
+		0x3752, 0x376e, 0x376f,
+		0x37f9, 0x37fa, 0x37fc,
+		0x3740, 0x3757, 0x3762,
+		0xffff
 	};
 	if (is_meson_txlx_cpu() || is_meson_txhd_cpu())
 		base_addr = 0xff900000;
@@ -85,7 +98,7 @@ void dump_di_reg(void)
 
 	pr_info("----dump di reg----\n");
 	pr_info("----dump size reg---");
-	for (i = 0; i < 57; i++)
+	for (i = 0; size_reg_addr[i] != 0xffff; i++)
 		pr_info("[0x%x][0x%x]=0x%x\n",
 			base_addr + ((size_reg_addr[i]) << 2),
 			size_reg_addr[i], RDMA_RD(size_reg_addr[i]));
@@ -101,6 +114,11 @@ void dump_di_reg(void)
 		pr_info("[0x%x][0x%x]=0x%x\n",
 			base_addr + ((0x1700 + i) << 2),
 			0x1700 + i, RDMA_RD(0x1700 + i));
+	}
+	for (i = 0; i < 4; i++) {
+		pr_info("[0x%x][0x%x]=0x%x\n",
+			base_addr + ((0x20ab + i) << 2),
+			0x20ab + i, RDMA_RD(0x20ab + i));
 	}
 	pr_info("----dump mcdi reg----\n");
 	for (i = 0; i < 201; i++)
@@ -171,6 +189,198 @@ void dump_di_reg(void)
 	pr_info("----dump reg done----\n");
 }
 
+void dump_di_reg_g12(void)
+{
+	unsigned int i = 0, base_addr = 0;
+	unsigned int size_reg_addr[] = {
+		0x1700, 0x1701,	0x1702,
+		0x1703, 0x37d2, 0x27d3,
+		0x37d7, 0x37d8,	0x37dc,
+		0x37dd, 0x37e1, 0x37e2,
+		0x37e6, 0x37e7, 0x37e9,
+		0x37ea, 0x37ec, 0x37ed,
+		0x37ee, 0x37f0, 0x37f1,
+		0x37f2, 0x37f4, 0x37f5,
+		0x37f6, 0x37f8, 0x2032,
+		0x2033, 0x2034, 0x2035,
+		0x2d01, 0x2d02, 0x2d8f,
+		0x2d08, 0x2d09, 0x2f00,
+		0x2f01, 0x17d0, 0x17d1,
+		0x17d2, 0x17d3, 0x17dd,
+		0x17de, 0x17df, 0x17e0,
+		0x17f7, 0x17f8, 0x17f9,
+		0x17fa, 0x17c0, 0x17c1,
+		0x17c6, 0x17c7, 0x3253,
+		0x3254, 0x3255, 0x3256,
+		0x17ea, 0x17eb, 0x17ec,
+		0x17ed, 0x2012, 0x2013,
+		0x2014, 0x2015, 0x37d2,
+		0x37d3, 0x37d7, 0x37d8,
+		0x37dc, 0x37dd, 0x37e1,
+		0x37e2, 0x37e6, 0x37e7,
+		0x37e9, 0x37ea, 0x37ed,
+		0x37ee, 0x37f1, 0x37f2,
+		0x37f4, 0x37f5,	0x37f6,
+		0x37f8, 0x3751,	0x3752,
+		0x376e, 0x376f,	0x37f9,
+		0x37fa, 0x37fc, 0x3740,
+		0x3757, 0x3762, 0x3755,
+		0x3757, 0x3760, 0x3762,
+		0x376e, 0x376f, 0x37f9,
+		0x37fa, 0x37fc,	0xffff
+	};
+	if (is_meson_txlx_cpu() ||
+		is_meson_txhd_cpu() ||
+		is_meson_g12a_cpu())
+		base_addr = 0xff900000;
+	else
+		base_addr = 0xd0100000;
+
+	pr_info("----dump di reg----\n");
+	pr_info("----dump size reg---");
+	for (i = 0; size_reg_addr[i] != 0xffff; i++)
+		pr_info("[0x%x][0x%x]=0x%x\n",
+			base_addr + ((size_reg_addr[i]) << 2),
+			size_reg_addr[i], RDMA_RD(size_reg_addr[i]));
+	for (i = 0; i < 255; i++) {
+		if (i == 0x45)
+			pr_info("----nr reg----");
+		if (i == 0x80)
+			pr_info("----3d reg----");
+		if (i == 0x9e)
+			pr_info("---nr reg done---");
+		if (i == 0x9c)
+			pr_info("---3d reg done---");
+		pr_info("[0x%x][0x%x]=0x%x\n",
+			base_addr + ((0x1700 + i) << 2),
+			0x1700 + i, RDMA_RD(0x1700 + i));
+	}
+	dump_pps_reg(base_addr);
+	dump_nrds_reg(base_addr);
+	pr_info("----dump mcdi reg----\n");
+	for (i = 0; i < 201; i++)
+		pr_info("[0x%x][0x%x]=0x%x\n",
+			base_addr + ((0x2f00 + i) << 2),
+			0x2f00 + i, RDMA_RD(0x2f00 + i));
+	pr_info("----dump pulldown reg----\n");
+	for (i = 0; i < 26; i++)
+		pr_info("[0x%x][0x%x]=0x%x\n",
+			base_addr + ((0x2fd0 + i) << 2),
+			0x2fd0 + i, RDMA_RD(0x2fd0 + i));
+	pr_info("----dump bit mode reg----\n");
+	for (i = 0; i < 4; i++)
+		pr_info("[0x%x][0x%x]=0x%x\n",
+			base_addr + ((0x20a7 + i) << 2),
+			0x20a7 + i, RDMA_RD(0x20a7 + i));
+	pr_info("[0x%x][0x%x]=0x%x\n",
+		base_addr + (0x2022 << 2),
+		0x2022, RDMA_RD(0x2022));
+	pr_info("[0x%x][0x%x]=0x%x\n",
+		base_addr + (0x17c1 << 2),
+		0x17c1, RDMA_RD(0x17c1));
+	pr_info("[0x%x][0x%x]=0x%x\n",
+		base_addr + (0x17c2 << 2),
+		0x17c2, RDMA_RD(0x17c2));
+	pr_info("[0x%x][0x%x]=0x%x\n",
+		base_addr + (0x1aa7 << 2),
+		0x1aa7, RDMA_RD(0x1aa7));
+	pr_info("----dump dnr reg----\n");
+	for (i = 0; i < 29; i++)
+		pr_info("[0x%x][0x%x]=0x%x\n",
+			base_addr + ((0x2d00 + i) << 2),
+			0x2d00 + i, RDMA_RD(0x2d00 + i));
+	pr_info("----dump if0 reg----\n");
+	for (i = 0; i < 26; i++)
+		pr_info("[0x%x][0x%x]=0x%x\n",
+			base_addr + ((0x3200 + i) << 2),
+			0x3200 + i, RDMA_RD(0x3200 + i));
+	pr_info("----dump gate reg----\n");
+	pr_info("[0x%x][0x1718]=0x%x\n",
+			base_addr + ((0x1718) << 2),
+			RDMA_RD(0x1718));
+	for (i = 0; i < 5; i++)
+		pr_info("[0x%x][0x%x]=0x%x\n",
+			base_addr + ((0x2006 + i) << 2),
+			0x2006 + i, RDMA_RD(0x2006 + i));
+	pr_info("[0x%x][0x%x]=0x%x\n",
+		base_addr + ((0x2dff) << 2),
+		0x2dff, RDMA_RD(0x2dff));
+	pr_info("----dump if2 reg----\n");
+	for (i = 0; i < 29; i++)
+		pr_info("[0x%x][0x%x]=0x%x\n",
+			base_addr + ((0x2010 + i) << 2),
+			0x2010 + i, RDMA_RD(0x2010 + i));
+	pr_info("----dump nr4 reg----\n");
+	pr_info("[0x%x][0x%x]=0x%x\n",
+		base_addr + ((0x2fff) << 2),
+		0x2fff, RDMA_RD(0x2fff));
+	for (i = 0x2da4; i < 0x2df6; i++)
+		pr_info("[0x%x][0x%x]=0x%x\n",
+			base_addr + (i << 2),
+			i, RDMA_RD(i));
+	for (i = 0x3700; i < 0x373f; i++)
+		pr_info("[0x%x][0x%x]=0x%x\n",
+			base_addr + (i << 2),
+			i, RDMA_RD(i));
+	for (i = 0; i < 57; i++)
+		pr_info("[0x%x][0x%x]=0x%x\n",
+			base_addr + ((size_reg_addr[i]) << 2),
+			size_reg_addr[i], RDMA_RD(size_reg_addr[i]));
+	pr_info("----dump arb reg----\n");
+	for (i = 0; i < 14; i++)
+		pr_info("[0x%x][0x%x]=0x%x\n",
+			base_addr + ((0x3750 + i) << 2),
+			0x3750 + i, RDMA_RD(0x3750 + i));
+	for (i = 0; i < 14; i++)
+		pr_info("[0x%x][0x%x]=0x%x\n",
+			base_addr + ((0x37c0 + i) << 2),
+			0x37c0 + i, RDMA_RD(0x37c0 + i));
+
+	pr_info("----dump pps reg----\n");
+	for (i = 0; i < 32; i++)
+		pr_info("[0x%x][0x%x]=0x%x\n",
+			base_addr + ((0x374e + i) << 2),
+			0x374e + i, RDMA_RD(0x374e + i));
+
+	pr_info("----dump di hdr reg----\n");
+	for (i = 0; i < 62; i++)
+		pr_info("[0x%x][0x%x]=0x%x\n",
+			base_addr + ((0x376e + i) << 2),
+			0x376e + i, RDMA_RD(0x376e + i));
+	pr_info("----dump reg done----\n");
+}
+
+static void dump_mif_state(struct DI_MIF_s *mif)
+{
+	pr_info("luma <%u, %u> <%u %u>.\n",
+		mif->luma_x_start0, mif->luma_x_end0,
+		mif->luma_y_start0, mif->luma_y_end0);
+	pr_info("chroma <%u, %u> <%u %u>.\n",
+		mif->chroma_x_start0, mif->chroma_x_end0,
+		mif->chroma_y_start0, mif->chroma_y_end0);
+	pr_info("canvas id <%u %u %u>.\n",
+		mif->canvas0_addr0,
+		mif->canvas0_addr1,
+		mif->canvas0_addr2);
+}
+
+static void dump_simple_mif_state(struct DI_SIM_MIF_s *simp_mif)
+{
+	pr_info("<%u %u> <%u %u>.\n",
+		simp_mif->start_x, simp_mif->end_x,
+		simp_mif->start_y, simp_mif->end_y);
+	pr_info("canvas num <%u>.\n",
+		simp_mif->canvas_num);
+}
+
+static void dump_mc_mif_state(struct DI_MC_MIF_s *mc_mif)
+{
+	pr_info("startx %u,<%u %u>, size <%u %u>.\n",
+		mc_mif->start_x, mc_mif->start_y,
+		mc_mif->end_y, mc_mif->size_x,
+		mc_mif->size_y);
+}
+
 void dump_di_pre_stru(struct di_pre_stru_s *di_pre_stru_p)
 {
 	pr_info("di_pre_stru:\n");
@@ -214,10 +424,10 @@ void dump_di_pre_stru(struct di_pre_stru_s *di_pre_stru_p)
 		di_pre_stru_p->source_change_flag);
 	pr_info("prog_proc_type		   = %d\n",
 		di_pre_stru_p->prog_proc_type);
-	pr_info("enable_mtnwr		   = %d\n",
-		di_pre_stru_p->enable_mtnwr);
-	pr_info("enable_pulldown_check	= %d\n",
-		di_pre_stru_p->enable_pulldown_check);
+	pr_info("madi_enable		   = %u\n",
+		di_pre_stru_p->madi_enable);
+	pr_info("mcdi_enable	= %u\n",
+		di_pre_stru_p->mcdi_enable);
 #ifdef DET3D
 	pr_info("vframe_interleave_flag = %d\n",
 		di_pre_stru_p->vframe_interleave_flag);
@@ -236,19 +446,98 @@ void dump_di_pre_stru(struct di_pre_stru_s *di_pre_stru_p)
 
 void dump_di_post_stru(struct di_post_stru_s *di_post_stru_p)
 {
-	di_pr_info("\ndi_post_stru:\n");
-	di_pr_info("run_early_proc_fun_flag	= %d\n",
+	pr_info("\ndi_post_stru:\n");
+	pr_info("run_early_proc_fun_flag	= %d\n",
 		di_post_stru_p->run_early_proc_fun_flag);
-	di_pr_info("cur_disp_index = %d\n",
+	pr_info("cur_disp_index = %d\n",
 		di_post_stru_p->cur_disp_index);
-	di_pr_info("post_de_busy			= %d\n",
+	pr_info("post_de_busy			= %d\n",
 		di_post_stru_p->post_de_busy);
-	di_pr_info("de_post_process_done	= %d\n",
+	pr_info("de_post_process_done	= %d\n",
 		di_post_stru_p->de_post_process_done);
-	di_pr_info("cur_post_buf			= 0x%p\n,",
+	pr_info("cur_post_buf			= 0x%p\n",
 		di_post_stru_p->cur_post_buf);
+	pr_info("post_peek_underflow	= %u\n",
+		di_post_stru_p->post_peek_underflow);
 }
 
+void dump_mif_size_state(struct di_pre_stru_s *pre_stru_p,
+	struct di_post_stru_s *post_stru_p)
+{
+	pr_info("======pre mif status======\n");
+	pr_info("DI_PRE_CTRL=0x%x\n", Rd(DI_PRE_CTRL));
+	pr_info("DI_PRE_SIZE=0x%x\n", Rd(DI_PRE_SIZE));
+	pr_info("DNR_HVSIZE=0x%x\n", Rd(DNR_HVSIZE));
+	pr_info("CONTWR_CAN_SIZE=0x%x\n", Rd(0x37ec));
+	pr_info("MTNWR_CAN_SIZE=0x%x\n", Rd(0x37f0));
+	pr_info("DNR_STAT_X_START_END=0x%x\n", Rd(0x2d08));
+	pr_info("DNR_STAT_Y_START_END=0x%x\n", Rd(0x2d09));
+	pr_info("MCDI_HV_SIZEIN=0x%x\n", Rd(0x2f00));
+	pr_info("MCDI_HV_BLKSIZEIN=0x%x\n", Rd(0x2f01));
+	pr_info("MCVECWR_CAN_SIZE=0x%x\n", Rd(0x37f4));
+	pr_info("MCINFWR_CAN_SIZE=0x%x\n", Rd(0x37f8));
+	pr_info("NRDSWR_CAN_SIZE=0x%x\n", Rd(0x37fc));
+	pr_info("NR_DS_BUF_SIZE=0x%x\n", Rd(0x3740));
+	pr_info("=====inp mif:\n");
+#if 0
+	Wr(DI_DBG_CTRL, 0x1b);
+	Wr(DI_DBG_CTRL1, 0x640064);
+	Wr_reg_bits(DI_PRE_GL_CTRL, 0, 31, 1);
+	Wr_reg_bits(DI_PRE_CTRL, 0, 11, 1);
+	Wr_reg_bits(DI_PRE_CTRL, 1, 31, 1);
+	Wr_reg_bits(DI_PRE_GL_CTRL, 1, 31, 1);
+	pr_info("DI_DBG_SRDY_INF=0x%x\n", Rd(DI_DBG_SRDY_INF));
+	pr_info("DI_DBG_RRDY_INF=0x%x\n", Rd(DI_DBG_RRDY_INF));
+#endif
+	pr_info("DI_INP_GEN_REG=0x%x\n", Rd(DI_INP_GEN_REG));
+	dump_mif_state(&pre_stru_p->di_inp_mif);
+	pr_info("=====mem mif:\n");
+	pr_info("DI_MEM_GEN_REG=0x%x\n", Rd(DI_MEM_GEN_REG));
+	dump_mif_state(&pre_stru_p->di_mem_mif);
+	pr_info("=====chan2 mif:\n");
+	pr_info("DI_CHAN2_GEN_REG=0x%x\n", Rd(DI_CHAN2_GEN_REG));
+	dump_mif_state(&pre_stru_p->di_chan2_mif);
+	pr_info("=====nrwr mif:\n");
+	pr_info("DI_NRWR_CTRL=0x%x\n", Rd(DI_NRWR_CTRL));
+	dump_simple_mif_state(&pre_stru_p->di_nrwr_mif);
+	pr_info("=====mtnwr mif:\n");
+	dump_simple_mif_state(&pre_stru_p->di_mtnwr_mif);
+	pr_info("=====contp2rd mif:\n");
+	dump_simple_mif_state(&pre_stru_p->di_contp2rd_mif);
+	pr_info("=====contprd mif:\n");
+	dump_simple_mif_state(&pre_stru_p->di_contprd_mif);
+	pr_info("=====contwr mif:\n");
+	dump_simple_mif_state(&pre_stru_p->di_contwr_mif);
+	pr_info("=====mcinford mif:\n");
+	dump_mc_mif_state(&pre_stru_p->di_mcinford_mif);
+	pr_info("=====mcinfowr mif:\n");
+	dump_mc_mif_state(&pre_stru_p->di_mcinfowr_mif);
+	pr_info("=====mcvecwr mif:\n");
+	dump_mc_mif_state(&pre_stru_p->di_mcvecwr_mif);
+	pr_info("======post mif status======\n");
+	pr_info("DI_POST_SIZE=0x%x\n", Rd(DI_POST_SIZE));
+	pr_info("DECOMB_FRM_SIZE=0x%x\n", Rd(0x2d8f));
+	pr_info("=====if0 mif:\n");
+	pr_info("DI_IF0_GEN_REG=0x%x\n", Rd(0x2030));
+	dump_mif_state(&post_stru_p->di_buf0_mif);
+	pr_info("=====if1 mif:\n");
+	pr_info("DI_IF1_GEN_REG=0x%x\n", Rd(0x17e8));
+	dump_mif_state(&post_stru_p->di_buf1_mif);
+	pr_info("=====if2 mif:\n");
+	pr_info("DI_IF2_GEN_REG=0x%x\n", Rd(0x2010));
+	dump_mif_state(&post_stru_p->di_buf2_mif);
+	pr_info("=====diwr mif:\n");
+	dump_simple_mif_state(&post_stru_p->di_diwr_mif);
+	pr_info("=====mtnprd mif:\n");
+	dump_simple_mif_state(&post_stru_p->di_mtnprd_mif);
+	pr_info("=====mcvecrd mif:\n");
+	dump_mc_mif_state(&post_stru_p->di_mcvecrd_mif);
+	pr_info("======pps size status======\n");
+	pr_info("DI_SC_LINE_IN_LENGTH=0x%x\n", Rd(0x3751));
+	pr_info("DI_SC_PIC_IN_HEIGHT=0x%x\n", Rd(0x3752));
+	pr_info("DI_HDR_IN_HSIZE=0x%x\n", Rd(0x376e));
+	pr_info("DI_HDR_IN_VSIZE=0x%x\n", Rd(0x376f));
+}
 void dump_di_buf(struct di_buf_s *di_buf)
 {
 	pr_info("di_buf %p vframe %p:\n", di_buf, di_buf->vframe);
@@ -363,27 +652,16 @@ void dump_pre_mif_state(void)
 	Wr_reg_bits(DI_CHAN2_GEN_REG3, 3, 10, 2);
 	pr_info("DI_INP_GEN_REG2=0x%x.\n", Rd(DI_INP_GEN_REG2));
 	pr_info("DI_INP_GEN_REG3=0x%x.\n", Rd(DI_INP_GEN_REG3));
-	pr_info("DI_INP_LUMA_FIFO_SIZE=0x%x.\n", Rd(DI_INP_LUMA_FIFO_SIZE));
-	pr_info("DI_INP_RANGE_MAP_Y=0x%x.\n", Rd(DI_INP_RANGE_MAP_Y));
-	pr_info("DI_INP_RANGE_MAP_CB=0x%x.\n", Rd(DI_INP_RANGE_MAP_CB));
-	pr_info("DI_INP_RANGE_MAP_CR=0x%x.\n", Rd(DI_INP_RANGE_MAP_CR));
-	pr_info("DI_INP_URGENT_CTRL=0x%x.\n", Rd(DI_INP_URGENT_CTRL));
 	for (i = 0; i < 10; i++)
 		pr_info("0x%x=0x%x.\n", 0x17ce + i, Rd(0x17ce + i));
 	pr_info("DI_MEM_GEN_REG2=0x%x.\n", Rd(DI_MEM_GEN_REG2));
 	pr_info("DI_MEM_GEN_REG3=0x%x.\n", Rd(DI_MEM_GEN_REG3));
 	pr_info("DI_MEM_LUMA_FIFO_SIZE=0x%x.\n", Rd(DI_MEM_LUMA_FIFO_SIZE));
-	pr_info("DI_MEM_RANGE_MAP_CB=0x%x.\n", Rd(DI_MEM_RANGE_MAP_CB));
-	pr_info("DI_MEM_RANGE_MAP_CR=0x%x.\n", Rd(DI_MEM_RANGE_MAP_CR));
-	pr_info("DI_MEM_URGENT_CTRL=0x%x.\n", Rd(DI_MEM_URGENT_CTRL));
 	for (i = 0; i < 10; i++)
 		pr_info("0x%x=0x%x.\n", 0x17db + i, Rd(0x17db + i));
 	pr_info("DI_CHAN2_GEN_REG2=0x%x.\n", Rd(DI_CHAN2_GEN_REG2));
 	pr_info("DI_CHAN2_GEN_REG3=0x%x.\n", Rd(DI_CHAN2_GEN_REG3));
 	pr_info("DI_CHAN2_LUMA_FIFO_SIZE=0x%x.\n", Rd(DI_CHAN2_LUMA_FIFO_SIZE));
-	pr_info("DI_CHAN2_RANGE_MAP_CB=0x%x.\n", Rd(DI_CHAN2_RANGE_MAP_CB));
-	pr_info("DI_CHAN2_RANGE_MAP_CR=0x%x.\n", Rd(DI_CHAN2_RANGE_MAP_CR));
-	pr_info("DI_CHAN2_URGENT_CTRL=0x%x.\n", Rd(DI_CHAN2_URGENT_CTRL));
 	for (i = 0; i < 10; i++)
 		pr_info("0x%x=0x%x.\n", 0x17f5 + i, Rd(0x17f5 + i));
 }
@@ -442,3 +720,18 @@ void dump_post_mif_reg(void)
 	pr_info("DI_DIWR_X=0x%x.\n", Rd(DI_DIWR_X));
 }
 
+void dump_buf_addr(struct di_buf_s *di_buf, unsigned int num)
+{
+	unsigned int i = 0;
+	struct di_buf_s *di_buf_p = NULL;
+
+	for (i = 0; i < num; i++) {
+		di_buf_p = (di_buf+i);
+		pr_info("di_buf[%d] nr_addr 0x%lx,",
+			di_buf_p->index, di_buf_p->nr_adr);
+		pr_info("mtn_addr 0x%lx, cnt_adr 0x%lx,",
+			di_buf_p->mtn_adr, di_buf_p->cnt_adr);
+		pr_info("mv_adr 0x%lx, mcinfo_adr 0x%lx.\n",
+			di_buf_p->mcvec_adr, di_buf_p->mcinfo_adr);
+	}
+}

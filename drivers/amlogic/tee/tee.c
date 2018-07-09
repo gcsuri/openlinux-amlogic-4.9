@@ -29,7 +29,7 @@
 #define TEE_MSG_UID_1         0xe7f811e3
 #define TEE_MSG_UID_2         0xaf630002
 #define TEE_MSG_UID_3         0xa5d5c51b
-
+static int disable_flag;
 #define TEE_SMC_FUNCID_CALLS_REVISION 0xFF03
 #define TEE_SMC_CALLS_REVISION \
 	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL, ARM_SMCCC_SMC_32, \
@@ -131,12 +131,16 @@ static CLASS_ATTR(os_version, 0644, tee_os_version_show,
 static CLASS_ATTR(api_version, 0644, tee_api_version_show,
 		NULL);
 
-int tee_load_video_fw(uint32_t index)
+/*
+ * index: firmware index
+ * vdec:  vdec type(0: compatible, 1: legency vdec, 2: HEVC vdec)
+ */
+int tee_load_video_fw(uint32_t index, uint32_t vdec)
 {
 	struct arm_smccc_res res;
 
 	arm_smccc_smc(TEE_SMC_LOAD_VIDEO_FW,
-			index, 0, 0, 0, 0, 0, 0, &res);
+			index, vdec, 0, 0, 0, 0, 0, &res);
 
 	return res.a0;
 }
@@ -145,7 +149,8 @@ EXPORT_SYMBOL(tee_load_video_fw);
 bool tee_enabled(void)
 {
 	struct arm_smccc_res res;
-
+	if (disable_flag == 1)
+		return false;
 	/*return false;*/ /*disable tee load temporary*/
 	arm_smccc_smc(TEE_SMC_CALLS_UID, 0, 0, 0, 0, 0, 0, 0, &res);
 
@@ -186,6 +191,8 @@ static void __exit aml_tee_modexit(void)
 {
 	class_destroy(tee_sys_class);
 }
+module_param(disable_flag, uint, 0664);
+MODULE_PARM_DESC(disable_flag, "\n tee firmload disable_flag flag\n");
 
 module_exit(aml_tee_modexit);
 

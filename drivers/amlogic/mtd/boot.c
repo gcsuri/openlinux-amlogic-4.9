@@ -156,7 +156,7 @@ void __attribute__((unused)) nand_info_page_prepare(
 	(bbt_size + mtd->writesize - 1) / mtd->writesize;
 	p_ext_info->bbt_occupy_pages = bbt_pages;
 	p_ext_info->bbt_start_block =
-		(BOOT_TOTAL_PAGES >> pages_per_blk_shift) + 4;
+		(BOOT_TOTAL_PAGES >> pages_per_blk_shift) + NAND_GAP_BLOCK_NUM;
 	/* fill descrete infos */
 	if (aml_chip->bl_mode) {
 		p_fip_info->version = 1;
@@ -294,7 +294,7 @@ int m3_nand_boot_read_page_hwecc(struct mtd_info *mtd,
 					memset(oob_buf, 0xff, user_byte_num);
 				} else {
 					mtd->ecc_stats.failed++;
-					pr_info("page0 read ecc fail at blk0 chip0\n");
+					pr_info("page0 read ecc fail\n");
 				}
 			} else
 				mtd->ecc_stats.corrected += stat;

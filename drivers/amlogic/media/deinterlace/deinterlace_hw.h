@@ -92,30 +92,38 @@ struct di_pq_parm_s {
 void read_pulldown_info(unsigned int *glb_frm_mot_num,
 	unsigned int *glb_fid_mot_num);
 void read_new_pulldown_info(struct FlmModReg_t *pFMRegp);
-
+void pulldown_info_clear_g12a(void);
 void combing_pd22_window_config(unsigned int width, unsigned int height);
 void di_hw_init(bool pulldown_en, bool mc_enable);
 void di_hw_uninit(void);
 void enable_di_pre_aml(
-	struct DI_MIF_s		*di_inp_mif,
-	struct DI_MIF_s		*di_mem_mif,
-	struct DI_MIF_s		*di_chan2_mif,
-	struct DI_SIM_MIF_s	*di_nrwr_mif,
-	struct DI_SIM_MIF_s	*di_mtnwr_mif,
+	struct DI_MIF_s		   *di_inp_mif,
+	struct DI_MIF_s		   *di_mem_mif,
+	struct DI_MIF_s		   *di_chan2_mif,
+	struct DI_SIM_MIF_s    *di_nrwr_mif,
+	struct DI_SIM_MIF_s    *di_mtnwr_mif,
 	struct DI_SIM_MIF_s    *di_contp2rd_mif,
 	struct DI_SIM_MIF_s    *di_contprd_mif,
 	struct DI_SIM_MIF_s    *di_contwr_mif,
-	int nr_en, int mtn_en, int pd32_check_en, int pd22_check_en,
-	int hist_check_en, int pre_field_num, int pre_vdin_link,
-	int hold_line, int urgent);
+	unsigned char madi_en, unsigned char pre_field_num,
+	unsigned char pre_vdin_link);
 void enable_afbc_input(struct vframe_s *vf);
 
 void mc_pre_mv_irq(void);
 void enable_mc_di_pre(struct DI_MC_MIF_s *di_mcinford_mif,
 	struct DI_MC_MIF_s *di_mcinfowr_mif,
-	struct DI_MC_MIF_s *di_mcvecwr_mif, int urgent);
+	struct DI_MC_MIF_s *di_mcvecwr_mif,
+	unsigned char mcdi_en);
+void enable_mc_di_pre_g12(struct DI_MC_MIF_s *di_mcinford_mif,
+	struct DI_MC_MIF_s *di_mcinfowr_mif,
+	struct DI_MC_MIF_s *di_mcvecwr_mif,
+	unsigned char mcdi_en);
+
 void enable_mc_di_post(struct DI_MC_MIF_s *di_mcvecrd_mif,
 	int urgent, bool reverse, int invert_mv);
+void enable_mc_di_post_g12(struct DI_MC_MIF_s *di_mcvecrd_mif,
+	int urgent, bool reverse, int invert_mv);
+
 void disable_post_deinterlace_2(void);
 void initial_di_post_2(int hsize_post, int vsize_post,
 	int hold_line, bool write_en);
@@ -143,7 +151,6 @@ void di_post_switch_buffer(
 	int invert_mv, bool pd_en, bool mc_enable,
 	int vskip_cnt
 );
-void di_post_read_reverse(bool reverse, bool mc_enable);
 void di_post_read_reverse_irq(bool reverse,
 	unsigned char mc_pre_flag, bool mc_enable);
 void di_top_gate_control(bool top_en, bool mc_en);
@@ -154,7 +161,6 @@ void di_hw_disable(bool mc_enable);
 void enable_di_pre_mif(bool enable, bool mc_enable);
 void enable_di_post_mif(enum gate_mode_e mode);
 void di_hw_uninit(void);
-void di_load_regs(struct di_pq_parm_s *di_pq_ptr);
 void combing_pd22_window_config(unsigned int width, unsigned int height);
 void calc_lmv_init(void);
 void calc_lmv_base_mcinfo(unsigned int vf_height, unsigned long mcinfo_adr);
@@ -162,4 +168,9 @@ void init_field_mode(unsigned short height);
 void film_mode_win_config(unsigned int width, unsigned int height);
 void pulldown_vof_win_config(struct pulldown_detected_s *wins);
 void di_load_regs(struct di_pq_parm_s *di_pq_ptr);
+void pre_frame_reset_g12a(unsigned char madi_en, unsigned char mcdi_en);
+void pre_frame_reset(void);
+void di_interrupt_ctrl(unsigned char ma_en,
+	unsigned char det3d_en, unsigned char nrds_en,
+	unsigned char post_wr, unsigned char mc_en);
 #endif

@@ -85,6 +85,15 @@
     #define VCLK_XD1                8
     #define VCLK_XD0                0
 #define HHI_VID_CLK_CNTL                           0x5f
+    #define VCLK_EN1               20
+    #define VCLK_EN0               19
+    #define VCLK_CLK_IN_SEL        16
+    #define VCLK_SOFT_RST          15
+    #define VCLK_DIV12_EN           4
+    #define VCLK_DIV6_EN            3
+    #define VCLK_DIV4_EN            2
+    #define VCLK_DIV2_EN            1
+    #define VCLK_DIV1_EN            0
 #define HHI_VID_CLK_CNTL2                          0x65
     #define HDMI_TX_PIXEL_GATE_VCLK  5
     #define VDAC_GATE_VCLK           4
@@ -114,6 +123,16 @@
 #define HHI_HDMI_PLL_CNTL4                         0xcb
 #define HHI_HDMI_PLL_CNTL5                         0xcc
 #define HHI_HDMI_PLL_CNTL6                         0xcd
+/*G12A*/
+#define HHI_HDMI_PLL_CNTL7                         0xce
+
+#define HHI_GP0_PLL_CNTL0						   0x10
+#define HHI_GP0_PLL_CNTL1						   0x11
+#define HHI_GP0_PLL_CNTL2						   0x12
+#define HHI_GP0_PLL_CNTL3						   0x13
+#define HHI_GP0_PLL_CNTL4						   0x14
+#define HHI_GP0_PLL_CNTL5						   0x15
+#define HHI_GP0_PLL_CNTL6						   0x16
 
 #define HHI_DSI_LVDS_EDP_CNTL0                     0xd1
 #define HHI_DSI_LVDS_EDP_CNTL1                     0xd2
@@ -135,6 +154,8 @@
 
 #define HHI_VDAC_CNTL0                             0xbd
 #define HHI_VDAC_CNTL1                             0xbe
+#define HHI_VDAC_CNTL0_G12A                        0xbb
+#define HHI_VDAC_CNTL1_G12A                        0xbc
 
 /*********************************
  * HIU:  GXBB

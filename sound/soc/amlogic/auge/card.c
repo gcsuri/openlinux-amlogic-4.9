@@ -21,6 +21,7 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_gpio.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/string.h>
 #include <linux/timer.h>
@@ -32,16 +33,31 @@
 #include "../../../../drivers/gpio/gpiolib.h"
 #include "card.h"
 
+#include "effects.h"
+
 struct aml_jack {
 	struct snd_soc_jack jack;
 	struct snd_soc_jack_pin pin;
 	struct snd_soc_jack_gpio gpio;
+};
 
+struct aml_chipset_info {
+	/* INT address separated from start address for ddr */
+	bool ddr_addr_separated;
+	/* two spdif out ? */
+	bool spdif_b;
+	/* eq/drc function */
+	bool eqdrc_fn;
 };
 
 struct aml_card_data {
 	struct snd_soc_card snd_card;
 	struct aml_dai_props {
+		/* sync with android audio hal,
+		 * dai link is used for which output,
+		 */
+		const char *suffix_name;
+
 		struct aml_dai cpu_dai;
 		struct aml_dai codec_dai;
 		unsigned int mclk_fs;
@@ -52,6 +68,7 @@ struct aml_card_data {
 	struct snd_soc_dai_link *dai_link;
 	int spk_mute_gpio;
 	bool spk_mute_active_low;
+	struct gpio_desc *avout_mute_desc;
 	struct loopback_cfg lb_cfg;
 	struct timer_list timer;
 	struct work_struct work;
@@ -67,6 +84,8 @@ struct aml_card_data {
 	int micphone_gpio_det;
 	int mic_detect_flag;
 	bool mic_det_enable;
+
+	struct aml_chipset_info *chipinfo;
 };
 
 #define aml_priv_to_dev(priv) ((priv)->snd_card.dev)
@@ -218,15 +237,15 @@ static void jack_work_func(struct work_struct *work)
 			card_data->mic_detect_flag = flag;
 
 			if (flag) {
-				extcon_set_state_sync(audio_extcon_headphone,
+				extcon_set_state_sync(audio_extcon_microphone,
 					EXTCON_JACK_MICROPHONE, 1);
-				snd_soc_jack_report(&card_data->hp_jack.jack,
-					status, SND_JACK_HEADPHONE);
+				snd_soc_jack_report(&card_data->mic_jack.jack,
+					status, SND_JACK_MICROPHONE);
 			} else {
-				extcon_set_state_sync(audio_extcon_headphone,
+				extcon_set_state_sync(audio_extcon_microphone,
 					EXTCON_JACK_MICROPHONE, 0);
-				snd_soc_jack_report(&card_data->hp_jack.jack, 0,
-						SND_JACK_HEADPHONE);
+				snd_soc_jack_report(&card_data->mic_jack.jack,
+					0, SND_JACK_MICROPHONE);
 			}
 
 		}
@@ -412,7 +431,7 @@ static int aml_card_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_dai_link *dai_link = aml_priv_to_link(priv, rtd->num);
 	struct aml_dai_props *dai_props =
 		aml_priv_to_props(priv, rtd->num);
-	unsigned int mclk, mclk_fs = 0;
+	unsigned int mclk = 0, mclk_fs = 0;
 	int i = 0, ret = 0;
 
 	if (priv->mclk_fs)
@@ -442,6 +461,9 @@ static int aml_card_hw_params(struct snd_pcm_substream *substream,
 		if (ret && ret != -ENOTSUPP)
 			goto err;
 	}
+
+	if (loopback_is_enable() && mclk)
+		loopback_hw_params(substream, params, &priv->lb_cfg, mclk);
 	return 0;
 err:
 	return ret;
@@ -609,10 +631,20 @@ static int aml_card_dai_link_of(struct device_node *node,
 	if (ret < 0)
 		goto dai_link_of_err;
 
-	ret = aml_card_set_dailink_name(dev, dai_link,
-						"%s-%s",
-						dai_link->cpu_dai_name,
-						dai_link->codecs->dai_name);
+	/* sync with android audio hal, what's the link used for. */
+	of_property_read_string(node, "suffix-name", &dai_props->suffix_name);
+
+	if (dai_props->suffix_name)
+		ret = aml_card_set_dailink_name(dev, dai_link,
+					"%s-%s-%s",
+					dai_link->cpu_dai_name,
+					dai_link->codecs->dai_name,
+					dai_props->suffix_name);
+	else
+		ret = aml_card_set_dailink_name(dev, dai_link,
+					"%s-%s",
+					dai_link->cpu_dai_name,
+					dai_link->codecs->dai_name);
 	if (ret < 0)
 		goto dai_link_of_err;
 
@@ -736,6 +768,14 @@ static int aml_card_parse_gpios(struct device_node *node,
 					ARRAY_SIZE(card_controls));
 	}
 
+	priv->avout_mute_desc = gpiod_get(dev,
+				"avout_mute",
+				GPIOD_OUT_HIGH);
+
+	gpiod_direction_output(priv->avout_mute_desc,
+		GPIOF_OUT_INIT_HIGH);
+	pr_info("set av out GPIOF_OUT_INIT_HIGH!\n");
+
 	return 0;
 }
 
@@ -813,6 +853,24 @@ card_parse_end:
 
 	return ret;
 }
+
+
+static struct aml_chipset_info g12a_chipset_info = {
+	.spdif_b        = true,
+	.eqdrc_fn       = true,
+};
+
+static const struct of_device_id auge_of_match[] = {
+	{
+		.compatible = "amlogic, axg-sound-card",
+	},
+	{
+		.compatible = "amlogic, g12a-sound-card",
+		.data       = &g12a_chipset_info,
+	},
+	{},
+};
+MODULE_DEVICE_TABLE(of, auge_of_match);
 
 static int aml_card_probe(struct platform_device *pdev)
 {
@@ -892,6 +950,13 @@ static int aml_card_probe(struct platform_device *pdev)
 					sizeof(priv->dai_props->codec_dai));
 	}
 
+
+	priv->chipinfo = (struct aml_chipset_info *)
+		of_device_get_match_data(&pdev->dev);
+
+	if (!priv->chipinfo)
+		pr_warn_once("check whether to update sound card init data\n");
+
 	snd_soc_card_set_drvdata(&priv->snd_card, priv);
 
 	ret = devm_snd_soc_register_card(&pdev->dev, &priv->snd_card);
@@ -907,6 +972,13 @@ static int aml_card_probe(struct platform_device *pdev)
 		goto err;
 	}
 
+	if (priv->chipinfo && priv->chipinfo->eqdrc_fn) {
+		pr_info("eq/drc function enable\n");
+		ret = card_add_effects_init(&priv->snd_card);
+		if (ret < 0)
+			pr_warn_once("Failed to add audio effects controls\n");
+	} else
+		pr_info("not support eq/drc function\n");
 
 	if (priv->hp_det_enable == 1 || priv->mic_det_enable == 1) {
 		audio_jack_detect(priv);
@@ -932,17 +1004,11 @@ static int aml_card_remove(struct platform_device *pdev)
 	return aml_card_clean_reference(card);
 }
 
-static const struct of_device_id aml_of_match[] = {
-	{ .compatible = "amlogic, axg-sound-card", },
-	{},
-};
-MODULE_DEVICE_TABLE(of, aml_of_match);
-
 static struct platform_driver aml_card = {
 	.driver = {
 		.name = "asoc-aml-card",
 		.pm = &snd_soc_pm_ops,
-		.of_match_table = aml_of_match,
+		.of_match_table = auge_of_match,
 	},
 	.probe = aml_card_probe,
 	.remove = aml_card_remove,

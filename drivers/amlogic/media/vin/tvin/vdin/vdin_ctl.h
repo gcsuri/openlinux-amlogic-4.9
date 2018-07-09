@@ -150,7 +150,6 @@ extern void vdin_set_matrixs(struct vdin_dev_s *devp, unsigned char no,
 extern bool vdin_check_cycle(struct vdin_dev_s *devp);
 extern bool vdin_write_done_check(unsigned int offset,
 		struct vdin_dev_s *devp);
-extern bool vdin_check_vs(struct vdin_dev_s *devp);
 extern void vdin_calculate_duration(struct vdin_dev_s *devp);
 extern void vdin_wr_reverse(unsigned int offset, bool hreverse,
 		bool vreverse);
@@ -196,5 +195,6 @@ extern void vdin_set_display_ratio(struct vdin_dev_s *devp,
 		struct vframe_s *vf);
 extern void vdin_source_bitdepth_reinit(struct vdin_dev_s *devp);
 extern void set_invert_top_bot(bool invert_flag);
+extern void vdin_clk_onoff(struct vdin_dev_s *devp, bool onoff);
 #endif
 

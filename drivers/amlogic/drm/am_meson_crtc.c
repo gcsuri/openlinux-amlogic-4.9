@@ -25,6 +25,7 @@
 #include "meson_crtc.h"
 #include "osd_drm.h"
 
+static struct osd_device_data_s osd_meson_dev;
 
 #define to_am_meson_crtc(x) container_of(x, struct am_meson_crtc, base)
 
@@ -61,6 +62,9 @@ char *am_meson_crtc_get_voutmode(struct drm_display_mode *mode)
 {
 	int i;
 
+	if (!strcmp(mode->name, "panel")) {
+		return "panel";
+	}
 	for (i = 0; i < ARRAY_SIZE(am_vout_modes); i++) {
 		if ((am_vout_modes[i].width == mode->hdisplay)
 			&& (am_vout_modes[i].height == mode->vdisplay)
@@ -111,7 +115,6 @@ int am_meson_crtc_set_mode(struct drm_mode_set *set)
 	int ret;
 
 	DRM_DEBUG_DRIVER("am_crtc_set_mode\n");
-
 	amcrtc = to_am_meson_crtc(set->crtc);
 	ret = drm_atomic_helper_set_config(set);
 
@@ -138,9 +141,8 @@ static bool am_meson_crtc_mode_fixup(struct drm_crtc *crtc,
 
 void am_meson_crtc_enable(struct drm_crtc *crtc)
 {
-	enum vmode_e mode;
-	int ret = 0;
 	char *name;
+	enum vmode_e mode;
 	struct drm_display_mode *adjusted_mode = &crtc->state->adjusted_mode;
 
 	if (!adjusted_mode) {
@@ -148,22 +150,18 @@ void am_meson_crtc_enable(struct drm_crtc *crtc)
 			adjusted_mode->name);
 		return;
 	}
-	//DRM_INFO("meson_crtc_enable  %s\n", adjusted_mode->name);
+	DRM_INFO("%s: %s\n", __func__, adjusted_mode->name);
 	name = am_meson_crtc_get_voutmode(adjusted_mode);
-
 	mode = validate_vmode(name);
 	if (mode == VMODE_MAX) {
 		DRM_ERROR("no matched vout mode\n");
 		return;
 	}
 
-	vout_notifier_call_chain(VOUT_EVENT_MODE_CHANGE_PRE, &mode);
-	ret = set_current_vmode(mode);
-	if (ret)
-		DRM_ERROR("new mode %s set error\n", name);
-	else
-		DRM_INFO("new mode %s set ok\n", name);
-	vout_notifier_call_chain(VOUT_EVENT_MODE_CHANGE, &mode);
+	set_vout_init(mode);
+	update_vout_viu();
+
+	return;
 }
 
 void am_meson_crtc_disable(struct drm_crtc *crtc)
@@ -231,7 +229,7 @@ int meson_crtc_create(struct meson_drm *priv)
 	}
 
 	drm_crtc_helper_add(crtc, &am_crtc_helper_funcs);
-	osd_drm_init();
+	osd_drm_init(&osd_meson_dev);
 
 	priv->crtc = crtc;
 	return 0;
@@ -245,3 +243,17 @@ void meson_crtc_irq(struct meson_drm *priv)
 	am_meson_crtc_handle_vsync(amcrtc);
 }
 
+int meson_crtc_dts_info_set(const void *dt_match_data)
+{
+	struct osd_device_data_s *osd_meson;
+
+	osd_meson = (struct osd_device_data_s *)dt_match_data;
+	if (osd_meson)
+		memcpy(&osd_meson_dev, osd_meson,
+			sizeof(struct osd_device_data_s));
+	else {
+		pr_err("%s data NOT match\n", __func__);
+		return -1;
+	}
+	return 0;
+}

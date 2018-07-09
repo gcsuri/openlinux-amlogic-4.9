@@ -139,7 +139,7 @@ static inline void __iomem *check_lcd_dsi_host_reg(unsigned int _reg)
 	if (check_lcd_ioremap(reg_bus))
 		return NULL;
 
-	reg_offset = LCD_REG_OFFSET(_reg);
+	reg_offset = LCD_REG_OFFSET_MIPI_HOST(_reg);
 	if (reg_offset >= lcd_reg_map[reg_bus].size) {
 		LCDERR("invalid dsi_host reg offset: 0x%04x\n", _reg);
 		return NULL;

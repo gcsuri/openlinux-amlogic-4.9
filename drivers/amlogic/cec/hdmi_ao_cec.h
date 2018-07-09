@@ -18,7 +18,7 @@
 #ifndef __AO_CEC_H__
 #define __AO_CEC_H__
 
-#define CEC_DRIVER_VERSION	"2017/12/11\n"
+#define CEC_DRIVER_VERSION	"2018/03/27\n"
 
 #define CEC_FRAME_DELAY		msecs_to_jiffies(400)
 #define CEC_DEV_NAME		"cec"
@@ -58,6 +58,14 @@
 #define AO_DEBUG_REG1			((0x29 << 2))
 #define AO_DEBUG_REG2			((0x2a << 2))
 #define AO_DEBUG_REG3			((0x2b << 2))
+#define AO_CEC_STICKY_DATA0			((0xca << 2))
+#define AO_CEC_STICKY_DATA1			((0xcb << 2))
+#define AO_CEC_STICKY_DATA2			((0xcc << 2))
+#define AO_CEC_STICKY_DATA3			((0xcd << 2))
+#define AO_CEC_STICKY_DATA4			((0xce << 2))
+#define AO_CEC_STICKY_DATA5			((0xcf << 2))
+#define AO_CEC_STICKY_DATA6			((0xd0 << 2))
+#define AO_CEC_STICKY_DATA7			((0xd1 << 2))
 
 /*
  * AOCEC_B
@@ -223,7 +231,6 @@
 
 #define TOP_HPD_PWR5V           0x002
 #define TOP_ARCTX_CNTL          0x010
-
 #define TOP_CLK_CNTL			0x001
 #define TOP_EDID_GEN_CNTL		0x004
 #define TOP_EDID_ADDR_CEC		0x005
@@ -371,6 +378,8 @@ void cecrx_irq_handle(void);
 void cec_logicaddr_set(int l_add);
 void cec_arbit_bit_time_set(unsigned int bit_set,
 				unsigned int time_set, unsigned int flag);
+void cec_irq_enable(bool enable);
+void aocec_irq_enable(bool enable);
 #endif
 
 #ifdef CONFIG_AMLOGIC_MEDIA_TVIN_HDMI

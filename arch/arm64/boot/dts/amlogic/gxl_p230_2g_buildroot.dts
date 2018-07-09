@@ -707,7 +707,7 @@
 		arc_port_mask = <0x0>;
 		interrupts = <0 199 1>;
 		interrupt-names = "hdmi_aocec";
-		pinctrl-names = "hdmitx_aocec";
+		pinctrl-names = "default";
 		pinctrl-0=<&hdmitx_aocec>;
 		reg = <0x0 0xc810023c 0x0 0x4
 		       0x0 0xc8100000 0x0 0x200>;
@@ -722,7 +722,7 @@
 	};
 
 	meson-fb {
-		compatible = "amlogic, meson-fb";
+		compatible = "amlogic, meson-gxl";
 		memory-region = <&logo_reserved>;
 		dev_name = "meson-fb";
 		status = "okay";
@@ -740,14 +740,14 @@
 		logo_addr = "0x7dc00000";
 	};
 	ge2d {
-		compatible = "amlogic, ge2d";
+		compatible = "amlogic, ge2d-gxl";
 		dev_name = "ge2d";
 		status = "okay";
 		interrupts = <0 150 1>;
 		interrupt-names = "ge2d";
 		clocks = <&clkc CLKID_VAPB_MUX>,
-			<&clkc CLKID_GE2D_GATE>,
-			<&clkc CLKID_G2D>;
+			<&clkc CLKID_G2D>,
+			<&clkc CLKID_GE2D_GATE>;
 		clock-names = "clk_vapb_0",
 			"clk_ge2d",
 			"clk_ge2d_gate";

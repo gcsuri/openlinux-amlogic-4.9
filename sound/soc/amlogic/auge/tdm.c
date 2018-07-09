@@ -34,8 +34,14 @@
 #include <linux/amlogic/clk_measure.h>
 #include <linux/amlogic/cpu_version.h>
 
+#include <linux/amlogic/media/sound/aout_notify.h>
+
 #include "ddr_mngr.h"
 #include "tdm_hw.h"
+
+/*#define G12A_PTM*/
+
+#include "sharebuffer.h"
 
 #define DRV_NAME "aml_tdm"
 
@@ -62,7 +68,27 @@ static void dump_pcm_setting(struct pcm_setting *setting)
 	pr_info("\tslot_width(%d)\n", setting->slot_width);
 	pr_info("\tlane_mask_in(%#x)\n", setting->lane_mask_in);
 	pr_info("\tlane_mask_out(%#x)\n", setting->lane_mask_out);
+	pr_info("\tlane_oe_mask_in(%#x)\n", setting->lane_oe_mask_in);
+	pr_info("\tlane_oe_mask_out(%#x)\n", setting->lane_oe_mask_out);
+	pr_info("\tlane_lb_mask_in(%#x)\n", setting->lane_lb_mask_in);
 }
+
+struct tdm_chipinfo {
+	/* device id */
+	unsigned int id;
+
+	/* no eco, sclk_ws_inv for out */
+	bool sclk_ws_inv;
+
+	/* output en (oe) for pinmux */
+	bool oe_fn;
+
+	/* clk pad */
+	bool clk_pad_ctl;
+
+	/* same source */
+	bool same_src_fn;
+};
 
 struct aml_tdm {
 	struct pcm_setting setting;
@@ -72,12 +98,19 @@ struct aml_tdm {
 	struct clk *clk;
 	struct clk *clk_gate;
 	struct clk *mclk;
+	struct clk *samesrc_sysclk;
 	bool contns_clk;
 	unsigned int id;
 	/* bclk src selection */
 	unsigned int clk_sel;
 	struct toddr *tddr;
 	struct frddr *fddr;
+
+	struct tdm_chipinfo *chipinfo;
+	/* share buffer with module */
+	int samesource_sel;
+	/* virtual link for i2s to hdmitx */
+	int i2s2hdmitx;
 };
 
 static const struct snd_pcm_hardware aml_tdm_hardware = {
@@ -97,7 +130,7 @@ static const struct snd_pcm_hardware aml_tdm_hardware = {
 	.buffer_bytes_max = 512 * 1024,
 
 	.rate_min = 8000,
-	.rate_max = 48000,
+	.rate_max = 192000,
 	.channels_min = 1,
 	.channels_max = 32,
 };
@@ -159,6 +192,36 @@ static int of_parse_tdm_lane_slot_out(struct device_node *np,
 	if (lane_mask)
 		return snd_soc_of_get_slot_mask(np,
 			"dai-tdm-lane-slot-mask-out", lane_mask);
+
+	return -EINVAL;
+}
+
+static int of_parse_tdm_lane_oe_slot_in(struct device_node *np,
+			      unsigned int *lane_mask)
+{
+	if (lane_mask)
+		return snd_soc_of_get_slot_mask(np,
+			"dai-tdm-lane-oe-slot-mask-in", lane_mask);
+
+	return -EINVAL;
+}
+
+static int of_parse_tdm_lane_oe_slot_out(struct device_node *np,
+			      unsigned int *lane_mask)
+{
+	if (lane_mask)
+		return snd_soc_of_get_slot_mask(np,
+			"dai-tdm-lane-oe-slot-mask-out", lane_mask);
+
+	return -EINVAL;
+}
+
+static int of_parse_tdm_lane_lb_slot_in(struct device_node *np,
+			      unsigned int *lane_mask)
+{
+	if (lane_mask)
+		return snd_soc_of_get_slot_mask(np,
+			"dai-tdm-lane-lb-slot-mask-in", lane_mask);
 
 	return -EINVAL;
 }
@@ -334,6 +397,21 @@ static int aml_dai_tdm_prepare(struct snd_pcm_substream *substream,
 		enum frddr_dest dst;
 		unsigned int fifo_id;
 
+		/* share buffer prepare */
+		if (p_tdm->chipinfo &&
+			p_tdm->chipinfo->same_src_fn) {
+			if (p_tdm->samesource_sel >= 0)
+				sharebuffer_prepare(substream,
+					fr, p_tdm->samesource_sel);
+		}
+
+		/* i2s source to hdmix */
+		if (p_tdm->i2s2hdmitx) {
+			i2s_to_hdmitx_ctrl(p_tdm->id);
+			aout_notifier_call_chain(AOUT_EVENT_IEC_60958_PCM,
+				substream);
+		}
+
 		fifo_id = aml_frddr_get_fifo_id(fr);
 		aml_tdm_fifo_ctrl(p_tdm->actrl,
 			bit_depth,
@@ -397,7 +475,9 @@ static int aml_dai_tdm_prepare(struct snd_pcm_substream *substream,
 		}
 
 		aml_toddr_select_src(to, src);
-		aml_toddr_set_format(to, toddr_type, 31, lsb);
+		aml_toddr_set_format(to, toddr_type, 31, lsb,
+			runtime->channels,
+			bit_depth);
 		aml_toddr_set_fifos(to, 0x40);
 	}
 
@@ -408,6 +488,14 @@ static int aml_dai_tdm_trigger(struct snd_pcm_substream *substream, int cmd,
 			       struct snd_soc_dai *cpu_dai)
 {
 	struct aml_tdm *p_tdm = snd_soc_dai_get_drvdata(cpu_dai);
+
+	/* share buffer trigger */
+	if ((substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+		&& p_tdm->chipinfo
+		&& p_tdm->chipinfo->same_src_fn) {
+		if (p_tdm->samesource_sel >= 0)
+			sharebuffer_trigger(cmd, p_tdm->samesource_sel);
+	}
 
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
@@ -425,7 +513,6 @@ static int aml_dai_tdm_trigger(struct snd_pcm_substream *substream, int cmd,
 			dev_info(substream->pcm->card->dev, "tdm capture enable\n");
 			aml_toddr_enable(p_tdm->tddr, 1);
 		}
-
 		aml_tdm_enable(p_tdm->actrl,
 			substream->stream, p_tdm->id, true);
 
@@ -435,6 +522,7 @@ static int aml_dai_tdm_trigger(struct snd_pcm_substream *substream, int cmd,
 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
 		aml_tdm_enable(p_tdm->actrl,
 			substream->stream, p_tdm->id, false);
+
 		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 			dev_info(substream->pcm->card->dev, "tdm playback stop\n");
 			aml_frddr_enable(p_tdm->fddr, 0);
@@ -492,7 +580,12 @@ static int aml_tdm_set_lanes(struct aml_tdm *p_tdm,
 
 	if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
 		// set lanes mask acordingly
-		lane_mask = setting->lane_mask_out;
+		if (p_tdm->chipinfo
+			&& p_tdm->chipinfo->oe_fn
+			&& p_tdm->setting.lane_oe_mask_out)
+			lane_mask = setting->lane_oe_mask_out;
+		else
+			lane_mask = setting->lane_mask_out;
 		for (i = 0; i < 4; i++) {
 			if (((1 << i) & lane_mask) && lanes) {
 				aml_tdm_set_channel_mask(p_tdm->actrl,
@@ -504,7 +597,12 @@ static int aml_tdm_set_lanes(struct aml_tdm *p_tdm,
 		aml_tdm_set_lane_channel_swap(p_tdm->actrl,
 			stream, p_tdm->id, swap_val);
 	} else {
-		lane_mask = setting->lane_mask_in;
+		if (p_tdm->chipinfo
+			&& p_tdm->chipinfo->oe_fn
+			&& p_tdm->setting.lane_oe_mask_in)
+			lane_mask = setting->lane_oe_mask_in;
+		else
+			lane_mask = setting->lane_mask_in;
 
 		for (i = 0; i < 4; i++) {
 			if (i < lanes)
@@ -521,6 +619,27 @@ static int aml_tdm_set_lanes(struct aml_tdm *p_tdm,
 		aml_tdm_set_lane_channel_swap(p_tdm->actrl,
 			stream, p_tdm->id, swap_val);
 	}
+
+
+	return 0;
+}
+
+static int aml_tdm_set_clk_pad(struct aml_tdm *p_tdm)
+{
+	unsigned int mpad, mclk_sel;
+
+	// TODO: update pad
+	if (p_tdm->id >= 1) {
+		mpad = p_tdm->id - 1;
+		mclk_sel = p_tdm->id;
+	} else {
+		mpad = 0;
+		mclk_sel = 0;
+	}
+
+	/* clk pad */
+	aml_tdm_clk_pad_select(p_tdm->actrl, mpad, mclk_sel,
+		p_tdm->id, p_tdm->clk_sel);
 
 	return 0;
 }
@@ -557,6 +676,27 @@ static int aml_dai_tdm_hw_params(struct snd_pcm_substream *substream,
 	if (ret)
 		return ret;
 
+	if (p_tdm->chipinfo && p_tdm->chipinfo->clk_pad_ctl) {
+		ret = aml_tdm_set_clk_pad(p_tdm);
+		if (ret)
+			return ret;
+	}
+
+	/* share buffer trigger */
+	if ((substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+		&& p_tdm->chipinfo
+		&& (p_tdm->chipinfo->same_src_fn)
+		&& (p_tdm->samesource_sel >= 0)) {
+		int mux = 0, ratio = 0;
+
+			sharebuffer_get_mclk_fs_ratio(p_tdm->samesource_sel,
+				&mux, &ratio);
+			pr_info("samesource sysclk:%d\n", rate * ratio * mux);
+			if (p_tdm->samesrc_sysclk)
+				clk_set_rate(p_tdm->samesrc_sysclk,
+					rate * ratio * mux);
+	}
+
 	return 0;
 }
 
@@ -564,11 +704,22 @@ static int aml_dai_tdm_hw_free(struct snd_pcm_substream *substream,
 				struct snd_soc_dai *cpu_dai)
 {
 	struct aml_tdm *p_tdm = snd_soc_dai_get_drvdata(cpu_dai);
+	struct frddr *fr = p_tdm->fddr;
 	int i;
 
 	for (i = 0; i < 4; i++)
 		aml_tdm_set_channel_mask(p_tdm->actrl,
 			substream->stream, p_tdm->id, i, 0);
+
+	/* share buffer free */
+	if ((substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+		&& p_tdm->chipinfo
+		&& p_tdm->chipinfo->same_src_fn
+		&& fr) {
+		if (p_tdm->samesource_sel >= 0)
+			sharebuffer_free(substream,
+				fr, p_tdm->samesource_sel);
+	}
 
 	return 0;
 }
@@ -589,6 +740,9 @@ static int aml_dai_set_tdm_fmt(struct snd_soc_dai *cpu_dai, unsigned int fmt)
 	default:
 		return -EINVAL;
 	}
+
+	if (p_tdm->chipinfo)
+		p_tdm->setting.sclk_ws_inv = p_tdm->chipinfo->sclk_ws_inv;
 
 	aml_tdm_set_format(p_tdm->actrl,
 		&(p_tdm->setting), p_tdm->clk_sel, p_tdm->id, fmt,
@@ -626,6 +780,16 @@ static int aml_dai_set_tdm_sysclk(struct snd_soc_dai *cpu_dai,
 		freq, ratio);
 
 	p_tdm->setting.sysclk = freq;
+
+#ifdef G12A_PTM
+	if (p_tdm->id == 0)
+		ratio = 14;
+	else if (p_tdm->id == 1)
+		ratio = 18;
+	else if (p_tdm->id == 2)
+		ratio = 20;
+#endif
+
 	clk_set_rate(p_tdm->clk, freq * ratio);
 	clk_set_rate(p_tdm->mclk, freq);
 
@@ -677,21 +841,97 @@ static int aml_dai_set_tdm_slot(struct snd_soc_dai *cpu_dai,
 {
 	struct aml_tdm *p_tdm = snd_soc_dai_get_drvdata(cpu_dai);
 	struct snd_soc_dai_driver *drv = cpu_dai->driver;
-	unsigned int lanes_cnt = 0;
+	unsigned int lanes_out_cnt = 0, lanes_in_cnt = 0;
+	unsigned int lanes_oe_out_cnt = 0, lanes_oe_in_cnt = 0;
+	unsigned int force_oe = 0, oe_val = 0;
+	unsigned int lanes_lb_cnt = 0;
+	int out_lanes, in_lanes;
+	int in_src = -1;
 
-	lanes_cnt = pop_count(p_tdm->setting.lane_mask_out);
+	lanes_out_cnt = pop_count(p_tdm->setting.lane_mask_out);
+	lanes_in_cnt = pop_count(p_tdm->setting.lane_mask_in);
+	lanes_oe_out_cnt = pop_count(p_tdm->setting.lane_oe_mask_out);
+	lanes_oe_in_cnt = pop_count(p_tdm->setting.lane_oe_mask_in);
+	lanes_lb_cnt = pop_count(p_tdm->setting.lane_lb_mask_in);
+
 	pr_info("%s(), txmask(%#x), rxmask(%#x)\n",
 		__func__, tx_mask, rx_mask);
-	pr_info("\tslots(%d), slot_width(%d), lanes(%d)\n",
-		slots, slot_width, lanes_cnt);
+	pr_info("\tlanes_out_cnt(%d), lanes_in_cnt(%d)\n",
+		lanes_out_cnt, lanes_in_cnt);
+	pr_info("\tlanes_oe_out_cnt(%d), lanes_oe_in_cnt(%d)\n",
+		lanes_oe_out_cnt, lanes_oe_in_cnt);
+	pr_info("\tlanes_lb_cnt(%d)\n",
+		lanes_lb_cnt);
+	pr_info("\tslots(%d), slot_width(%d)\n",
+		slots, slot_width);
 	p_tdm->setting.tx_mask = tx_mask;
 	p_tdm->setting.rx_mask = rx_mask;
 	p_tdm->setting.slots = slots;
 	p_tdm->setting.slot_width = slot_width;
-	aml_tdm_set_slot(p_tdm->actrl, slots, slot_width, p_tdm->id);
+
+	if (p_tdm->setting.lane_mask_in
+			& p_tdm->setting.lane_lb_mask_in)
+		pr_err("pin(%x) should be selected for only one usage\n",
+			p_tdm->setting.lane_mask_in
+				& p_tdm->setting.lane_lb_mask_in);
+
+	if (p_tdm->chipinfo && p_tdm->chipinfo->oe_fn) {
+		if (p_tdm->setting.lane_mask_out
+				& p_tdm->setting.lane_oe_mask_out)
+			pr_err("pin(%x) should be selected for only one usage\n",
+				p_tdm->setting.lane_mask_out
+					& p_tdm->setting.lane_oe_mask_out);
+
+		if ((p_tdm->setting.lane_mask_in
+				& p_tdm->setting.lane_oe_mask_in)
+			|| (p_tdm->setting.lane_lb_mask_in
+				& p_tdm->setting.lane_oe_mask_in))
+			pr_err("pin(%x:%x) should be selected for only one usage\n",
+				p_tdm->setting.lane_mask_in
+					& p_tdm->setting.lane_oe_mask_in,
+				p_tdm->setting.lane_lb_mask_in
+					& p_tdm->setting.lane_oe_mask_in);
+
+		if (lanes_oe_out_cnt) {
+			force_oe = p_tdm->setting.lane_oe_mask_out;
+			oe_val = p_tdm->setting.lane_oe_mask_out;
+		}
+
+		if (lanes_lb_cnt) {
+			in_src = p_tdm->id + 6;
+			if (in_src > 7) {
+				pr_err("unknown src(%d) for tdmin\n", in_src);
+				return -EINVAL;
+			}
+		}
+		if (lanes_oe_in_cnt)
+			in_src = p_tdm->id + 3;
+		if (lanes_in_cnt)
+			in_src = p_tdm->id;
+	} else {
+		if (lanes_lb_cnt)
+			in_src = p_tdm->id + 3;
+		if (lanes_in_cnt && lanes_in_cnt <= 3)
+			in_src = p_tdm->id;
+		if (in_src > 5) {
+			pr_err("unknown src(%d) for tdmin\n", in_src);
+			return -EINVAL;
+		}
+	}
+
+	out_lanes = lanes_out_cnt + lanes_oe_out_cnt;
+	in_lanes = lanes_in_cnt + lanes_oe_in_cnt + lanes_lb_cnt;
+	if (in_lanes >= 0 && in_lanes <= 4)
+		aml_tdm_set_slot_in(p_tdm->actrl,
+			p_tdm->id, in_src, slot_width);
+	if (out_lanes >= 0 && out_lanes <= 4)
+		aml_tdm_set_slot_out(p_tdm->actrl,
+			p_tdm->id, slots, slot_width,
+			force_oe, oe_val);
+
 	/* constrains hw channels_max by DTS configs */
-	drv->playback.channels_max = slots * lanes_cnt;
-	drv->capture.channels_max = slots * lanes_cnt;
+	drv->playback.channels_max = slots * out_lanes;
+	drv->capture.channels_max = slots * in_lanes;
 
 	return 0;
 }
@@ -797,10 +1037,67 @@ static const struct snd_soc_component_driver aml_tdm_component = {
 	.name		= DRV_NAME,
 };
 
+struct tdm_chipinfo axg_tdma_chipinfo = {
+	.id = TDM_A,
+};
+
+struct tdm_chipinfo axg_tdmb_chipinfo = {
+	.id = TDM_B,
+};
+
+struct tdm_chipinfo axg_tdmc_chipinfo = {
+	.id = TDM_C,
+};
+
+struct tdm_chipinfo g12a_tdma_chipinfo = {
+	.id = TDM_A,
+	.sclk_ws_inv = true,
+	.oe_fn       = true,
+	.clk_pad_ctl = true,
+	.same_src_fn = true,
+};
+
+struct tdm_chipinfo g12a_tdmb_chipinfo = {
+	.id = TDM_B,
+	.sclk_ws_inv = true,
+	.oe_fn       = true,
+	.clk_pad_ctl = true,
+	.same_src_fn = true,
+};
+
+struct tdm_chipinfo g12a_tdmc_chipinfo = {
+	.id = TDM_C,
+	.sclk_ws_inv = true,
+	.oe_fn       = true,
+	.clk_pad_ctl = true,
+	.same_src_fn = true,
+};
+
 static const struct of_device_id aml_tdm_device_id[] = {
-	{ .compatible = "amlogic, snd-tdma", .data = (void *)TDM_A},
-	{ .compatible = "amlogic, snd-tdmb", .data = (void *)TDM_B},
-	{ .compatible = "amlogic, snd-tdmc", .data = (void *)TDM_C},
+	{
+		.compatible = "amlogic, axg-snd-tdma",
+		.data = &axg_tdma_chipinfo,
+	},
+	{
+		.compatible = "amlogic, axg-snd-tdmb",
+		.data = &axg_tdmb_chipinfo,
+	},
+	{
+		.compatible = "amlogic, axg-snd-tdmc",
+		.data = &axg_tdmc_chipinfo,
+	},
+	{
+		.compatible = "amlogic, g12a-snd-tdma",
+		.data = &g12a_tdma_chipinfo,
+	},
+	{
+		.compatible = "amlogic, g12a-snd-tdmb",
+		.data = &g12a_tdmb_chipinfo,
+	},
+	{
+		.compatible = "amlogic, g12a-snd-tdmc",
+		.data = &g12a_tdmc_chipinfo,
+	},
 	{},
 };
 MODULE_DEVICE_TABLE(of, aml_tdm_device_id);
@@ -813,18 +1110,21 @@ static int aml_tdm_platform_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct aml_audio_controller *actrl = NULL;
 	struct aml_tdm *p_tdm = NULL;
-	const struct of_device_id *id;
-	unsigned long iddata = 0;
+	struct tdm_chipinfo *p_chipinfo;
 	int ret = 0;
 
 	p_tdm = devm_kzalloc(dev, sizeof(struct aml_tdm), GFP_KERNEL);
 	if (!p_tdm)
 		return -ENOMEM;
 
-	/* get tdm device id */
-	id = of_match_device(of_match_ptr(aml_tdm_device_id), dev);
-	iddata = (unsigned long)id->data;
-	p_tdm->id = (unsigned int)iddata;
+	/* match data */
+	p_chipinfo = (struct tdm_chipinfo *)
+		of_device_get_match_data(dev);
+	if (!p_chipinfo)
+		dev_warn_once(dev, "check whether to update tdm chipinfo\n");
+
+	p_tdm->chipinfo = p_chipinfo;
+	p_tdm->id = p_chipinfo->id;
 	pr_info("%s, tdm ID = %u\n", __func__, p_tdm->id);
 
 	/* get audio controller */
@@ -846,16 +1146,63 @@ static int aml_tdm_platform_probe(struct platform_device *pdev)
 		return -ENXIO;
 	}
 
-	/* get tdm lanes info. if not, set to default 1 */
+	/* default no same source */
+	if (p_tdm->chipinfo &&
+		p_tdm->chipinfo->same_src_fn) {
+
+		ret = of_property_read_u32(node, "samesource_sel",
+				&p_tdm->samesource_sel);
+		if (ret < 0)
+			p_tdm->samesource_sel = -1;
+		else {
+			p_tdm->samesrc_sysclk = devm_clk_get(&pdev->dev,
+				"samesource_sysclk");
+			if (IS_ERR(p_tdm->samesrc_sysclk)) {
+				dev_err(&pdev->dev,
+					"Can't retrieve samesrc_sysclk clock\n");
+				return PTR_ERR(p_tdm->samesrc_sysclk);
+			}
+		}
+		pr_info("TDM id %d samesource_sel:%d\n",
+			p_tdm->id,
+			p_tdm->samesource_sel);
+	}
+
+	ret = of_property_read_u32(node, "i2s2hdmi",
+			&p_tdm->i2s2hdmitx);
+	if (ret < 0)
+		p_tdm->i2s2hdmitx = 0;
+	pr_info("TDM id %d i2s2hdmi:%d\n",
+		p_tdm->id,
+		p_tdm->i2s2hdmitx);
+
+	/* get tdm lanes info. if not, set to default 0 */
 	ret = of_parse_tdm_lane_slot_in(node,
 			&p_tdm->setting.lane_mask_in);
 	if (ret < 0)
-		p_tdm->setting.lane_mask_in = 0x1;
+		p_tdm->setting.lane_mask_in = 0x0;
 
 	ret = of_parse_tdm_lane_slot_out(node,
 			&p_tdm->setting.lane_mask_out);
 	if (ret < 0)
-		p_tdm->setting.lane_mask_out = 0x1;
+		p_tdm->setting.lane_mask_out = 0x0;
+
+	/* get tdm lanes oe info. if not, set to default 0 */
+	ret = of_parse_tdm_lane_oe_slot_in(node,
+			&p_tdm->setting.lane_oe_mask_in);
+	if (ret < 0)
+		p_tdm->setting.lane_oe_mask_in = 0x0;
+
+	ret = of_parse_tdm_lane_oe_slot_out(node,
+			&p_tdm->setting.lane_oe_mask_out);
+	if (ret < 0)
+		p_tdm->setting.lane_oe_mask_out = 0x0;
+
+	/* get tdm lanes lb info. if not, set to default 0 */
+	ret = of_parse_tdm_lane_lb_slot_in(node,
+			&p_tdm->setting.lane_lb_mask_in);
+	if (ret < 0)
+		p_tdm->setting.lane_lb_mask_in = 0x0;
 
 	p_tdm->clk = devm_clk_get(&pdev->dev, "clk_srcpll");
 	if (IS_ERR(p_tdm->clk)) {
@@ -885,7 +1232,7 @@ static int aml_tdm_platform_probe(struct platform_device *pdev)
 	dev_set_drvdata(dev, p_tdm);
 
 	ret = devm_snd_soc_register_component(dev, &aml_tdm_component,
-					 &aml_tdm_dai[iddata], 1);
+					 &aml_tdm_dai[p_tdm->id], 1);
 	if (ret) {
 		dev_err(dev, "devm_snd_soc_register_component failed\n");
 		return ret;

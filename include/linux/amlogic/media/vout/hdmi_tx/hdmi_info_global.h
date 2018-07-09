@@ -64,7 +64,7 @@ enum hdmi_barinfo {
 /* Vert.and Horiz. Bar Info valid */
 };
 
-enum hdmi_colorimetry {
+enum hdmi_colourimetry {
 	CC_NO_DATA = 0, CC_ITU601, CC_ITU709, CC_XVYCC601, CC_XVYCC709,
 };
 
@@ -84,7 +84,7 @@ struct hdmi_videoinfo {
 	enum hdmi_barinfo bar_info;
 	enum hdmi_pixel_repeat repeat_time;
 	enum hdmi_aspect_ratio aspect_ratio;
-	enum hdmi_colorimetry cc;
+	enum hdmi_colourimetry cc;
 	enum hdmi_scan ss;
 	enum hdmi_slacing sc;
 };
@@ -145,58 +145,58 @@ enum hdmitx_disptype {
 };
 
 struct hdmitx_supstatus {
-	int hpd_state:1;
-	int support_480i:1;
-	int support_576i:1;
-	int support_480p:1;
-	int support_576p:1;
-	int support_720p_60hz:1;
-	int support_720p_50hz:1;
-	int support_1080i_60hz:1;
-	int support_1080i_50hz:1;
-	int support_1080p_60hz:1;
-	int support_1080p_50hz:1;
-	int support_1080p_24hz:1;
-	int support_1080p_25hz:1;
-	int support_1080p_30hz:1;
+	unsigned int hpd_state:1;
+	unsigned int support_480i:1;
+	unsigned int support_576i:1;
+	unsigned int support_480p:1;
+	unsigned int support_576p:1;
+	unsigned int support_720p_60hz:1;
+	unsigned int support_720p_50hz:1;
+	unsigned int support_1080i_60hz:1;
+	unsigned int support_1080i_50hz:1;
+	unsigned int support_1080p_60hz:1;
+	unsigned int support_1080p_50hz:1;
+	unsigned int support_1080p_24hz:1;
+	unsigned int support_1080p_25hz:1;
+	unsigned int support_1080p_30hz:1;
 };
 
 struct hdmitx_suplpcminfo {
-	int support_flag:1;
-	int max_channel_num:3;
-	int _192k:1;
-	int _176k:1;
-	int _96k:1;
-	int _88k:1;
-	int _48k:1;
-	int _44k:1;
-	int _32k:1;
-	int _24bit:1;
-	int _20bit:1;
-	int _16bit:1;
+	unsigned int support_flag:1;
+	unsigned int max_channel_num:3;
+	unsigned int _192k:1;
+	unsigned int _176k:1;
+	unsigned int _96k:1;
+	unsigned int _88k:1;
+	unsigned int _48k:1;
+	unsigned int _44k:1;
+	unsigned int _32k:1;
+	unsigned int _24bit:1;
+	unsigned int _20bit:1;
+	unsigned int _16bit:1;
 };
 
 struct hdmitx_supcompressedinfo {
-	int support_flag:1;
-	int max_channel_num:3;
-	int _192k:1;
-	int _176k:1;
-	int _96k:1;
-	int _88k:1;
-	int _48k:1;
-	int _44k:1;
-	int _32k:1;
-	int _max_bit:10;
+	unsigned int support_flag:1;
+	unsigned int max_channel_num:3;
+	unsigned int _192k:1;
+	unsigned int _176k:1;
+	unsigned int _96k:1;
+	unsigned int _88k:1;
+	unsigned int _48k:1;
+	unsigned int _44k:1;
+	unsigned int _32k:1;
+	unsigned int _max_bit:10;
 };
 
 struct hdmitx_supspeakerformat {
-	int rlc_rrc:1;
-	int flc_frc:1;
-	int rc:1;
-	int rl_rr:1;
-	int fc:1;
-	int lfe:1;
-	int fl_fr:1;
+	unsigned int rlc_rrc:1;
+	unsigned int flc_frc:1;
+	unsigned int rc:1;
+	unsigned int rl_rr:1;
+	unsigned int fc:1;
+	unsigned int lfe:1;
+	unsigned int fl_fr:1;
 };
 
 struct hdmitx_vidpara {
@@ -207,7 +207,7 @@ struct hdmitx_vidpara {
 	enum hdmi_barinfo bar_info;
 	enum hdmi_pixel_repeat repeat_time;
 	enum hdmi_aspect_ratio aspect_ratio;
-	enum hdmi_colorimetry cc;
+	enum hdmi_colourimetry cc;
 	enum hdmi_scan ss;
 	enum hdmi_slacing sc;
 };

@@ -41,18 +41,6 @@
 #define HW          "hw: "
 #define REG         "reg: "
 
-/*
- * HDMITX HPD HW related operations
- */
-enum hpd_op {
-	HPD_INIT_DISABLE_PULLUP,
-	HPD_INIT_SET_FILTER,
-	HPD_IS_HPD_MUXED,
-	HPD_MUX_HPD,
-	HPD_UNMUX_HPD,
-	HPD_READ_HPD_GPIO,
-};
-
 int hdmitx_hpd_hw_op_gxbb(enum hpd_op cmd);
 int read_hpd_gpio_gxbb(void);
 int hdmitx_ddc_hw_op_gxbb(enum ddc_op cmd);
@@ -70,7 +58,13 @@ void set_hpll_od1_gxl(unsigned int div);
 void set_hpll_od2_gxl(unsigned int div);
 void set_hpll_od3_gxl(unsigned int div);
 
+void set_g12a_hpll_clk_out(unsigned int frac_rate, unsigned int clk);
+void set_hpll_od1_g12a(unsigned int div);
+void set_hpll_od2_g12a(unsigned int div);
+void set_hpll_od3_g12a(unsigned int div);
+
 int hdmitx_hpd_hw_op_txlx(enum hpd_op cmd);
+int hdmitx_hpd_hw_op_g12a(enum hpd_op cmd);
 int read_hpd_gpio_txlx(void);
 int hdmitx_ddc_hw_op_txlx(enum ddc_op cmd);
 extern unsigned int hdmitx_get_format_txlx(void);

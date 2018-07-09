@@ -46,6 +46,7 @@
 
 #ifdef CONFIG_AMLOGIC_USB3PHY
 extern void aml_new_usb_init(void);
+extern void aml_new_usb_v2_init(void);
 #endif
 
 /* Type declarations */
@@ -87,6 +88,8 @@ typedef struct dwc_otg_device {
 	struct notifier_block nb;
 
 	struct delayed_work	work;
+
+	u32 host_plug;
 } dwc_otg_device_t;
 
 /*We must clear S3C24XX_EINTPEND external interrupt register

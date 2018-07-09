@@ -17,7 +17,8 @@
 
 #ifndef __AM_MESON_GEM_H
 #define __AM_MESON_GEM_H
-#include  <drm/drm_gem.h>
+#include <drm/drm_gem.h>
+#include <linux/amlogic/meson_drm.h>
 #include <ion/ion_priv.h>
 #include "meson_drv.h"
 
@@ -28,9 +29,6 @@ struct am_meson_gem_object {
 	/*for buffer create from ion heap */
 	struct ion_handle *handle;
 	bool bscatter;
-	/*for buffer imported. */
-	struct sg_table *sgt;
-
 };
 
 /* GEM MANAGER CREATE*/
@@ -52,6 +50,11 @@ int am_meson_gem_dumb_destroy(
 	struct drm_file *file,
 	struct drm_device *dev,
 	uint32_t handle);
+
+int am_meson_gem_create_ioctl(
+	struct drm_device *dev,
+	void *data,
+	struct drm_file *file_priv);
 
 int am_meson_gem_dumb_map_offset(
 	struct drm_file *file_priv,
@@ -75,13 +78,23 @@ int am_meson_gem_object_get_phyaddr(
 	struct am_meson_gem_object *meson_gem);
 
 /* GEM PRIME OPERATIONS */
-struct drm_gem_object *am_meson_gem_prime_import(
-	struct drm_device *drm_dev,
-	struct dma_buf *dma_buf);
+struct sg_table *am_meson_gem_prime_get_sg_table(
+	struct drm_gem_object *obj);
 
-struct dma_buf *am_meson_gem_prime_export(
-	struct drm_device *drm_dev,
+struct drm_gem_object *am_meson_gem_prime_import_sg_table(
+	struct drm_device *dev,
+	struct dma_buf_attachment *attach,
+	struct sg_table *sgt);
+
+void *am_meson_gem_prime_vmap(
+	struct drm_gem_object *obj);
+
+void am_meson_gem_prime_vunmap(
 	struct drm_gem_object *obj,
-	int flags);
+	void *vaddr);
+
+int am_meson_gem_prime_mmap(
+	struct drm_gem_object *obj,
+	struct vm_area_struct *vma);
 
 #endif /* __AM_MESON_GEM_H */

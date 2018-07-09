@@ -38,6 +38,9 @@
 #define TUNING_NUM_PER_POINT 10
 #define CALI_PATTERN_OFFSET ((SZ_1M * (36 + 3)) / 512)
 /* #define AML_RESP_WR_EXT */
+/* pio to transfer data */
+#define CFG_SDEMMC_PIO		(1)
+
 #ifdef AML_CALIBRATION
 #define MAX_CALI_RETRY	3
 #define MAX_DELAY_CNT	16
@@ -68,6 +71,20 @@
 #define SD_EMMC_EYETEST_OUT0 0x30
 #define SD_EMMC_EYETEST_OUT1 0x34
 #define SD_EMMC_INTF3	0x38
+
+#define SD_EMMC_DESC_OFF	0x200
+/* using SD_EMMC_CMD_RSP */
+#define SD_EMMC_RESP_SIZE	0x0
+#define SD_EMMC_DESC_SIZE	(0x200 - SD_EMMC_RESP_SIZE)
+#define SD_EMMC_RESP_OFF	(SD_EMMC_DESC_OFF + SD_EMMC_DESC_SIZE)
+
+#define SD_EMMC_PING_OFF	0x400
+#define SD_EMMC_PING_SIZE	0x200
+#define SD_EMMC_PONG_OFF	0x600
+#define SD_EMMC_PONE_SIZE	0x200
+/* join ping/pong as one */
+#define SD_EMMC_PIO_OFF		(SD_EMMC_PING_OFF)
+#define SD_EMMC_PIO_SIZE	(SD_EMMC_PING_SIZE + SD_EMMC_PONE_SIZE)
 
 #define   CLK_DIV_SHIFT 0
 #define   CLK_DIV_WIDTH 6
@@ -170,6 +187,7 @@ enum mmc_chip_e {
 	MMC_CHIP_AXG = 0x25,
 	MMC_CHIP_GXLX = 0x26,
 	MMC_CHIP_TXHD = 0x27,
+	MMC_CHIP_G12A = 0x28,
 };
 
 struct meson_mmc_data {
@@ -182,6 +200,8 @@ struct meson_mmc_data {
 };
 
 struct amlsd_host;
+struct sd_emmc_desc_info;
+
 struct amlsd_platform {
 	struct amlsd_host *host;
 	struct mmc_host *mmc;
@@ -228,6 +248,7 @@ struct amlsd_platform {
 	unsigned int vol_switch_18;
 	unsigned int vol_switch_delay;
 	char pinname[32];
+	char dmode[8];
 	unsigned int gpio_ro;
 	unsigned int gpio_dat3;
 	unsigned int hw_reset;
@@ -386,6 +407,13 @@ struct amlsd_host {
 
 	u8 *blk_test;
 	char *desc_buf;
+#ifdef CFG_SDEMMC_PIO
+	/* bounce buffer to accomplish 32bit apb access */
+	u8 *desc_bn;
+	/* pio buffer */
+	u8 *pio_buf;
+	dma_addr_t pio_dma_buf;
+#endif
 	dma_addr_t		desc_dma_addr;
 	unsigned int dma_sts;
 	unsigned int sg_cnt;
@@ -446,6 +474,12 @@ struct amlsd_host {
 	struct aml_emmc_adjust emmc_adj;
 	struct aml_emmc_rxclk emmc_rxclk;
 	u32 error_flag;
+	/* pre cmd op */
+	unsigned int (*pre_cmd_op)(struct amlsd_host *host,
+		struct mmc_request *mrq, struct sd_emmc_desc_info *desc);
+	/* post cmd op */
+	int (*post_cmd_op)(struct amlsd_host *host,
+		struct mmc_request *mrq);
 };
 
 /*-sdio-*/
@@ -1586,30 +1620,31 @@ struct sd_emmc_desc_info {
 	u32 resp_addr;
 };
 #define HHI_NAND_CLK_CNTL					0x97
-#define SD_EMMC_MAX_DESC_MUN					512
-#define SD_EMMC_REQ_DESC_MUN					4
-#define SD_EMMC_CLOCK_SRC_OSC				 0 /* 24MHz */
-#define SD_EMMC_CLOCK_SRC_FCLK_DIV2		   1 /* 1GHz */
-#define SD_EMMC_CLOCK_SRC_400MHZ			4
-#define SD_EMMC_CLOCK_SRC_MPLL				2 /* MPLL */
-#define SD_EMMC_CLOCK_SRC_DIFF_PLL			3
-#define SD_EMMC_IRQ_ALL					0x3fff
-#define SD_EMMC_RESP_SRAM_OFF					0
+#define SD_EMMC_MAX_DESC_MUN		512
+#define SD_EMMC_MAX_DESC_MUN_PIO		36
+#define SD_EMMC_REQ_DESC_MUN		4
+#define SD_EMMC_CLOCK_SRC_OSC		0 /* 24MHz */
+#define SD_EMMC_CLOCK_SRC_FCLK_DIV2	1 /* 1GHz */
+#define SD_EMMC_CLOCK_SRC_400MHZ	4
+#define SD_EMMC_CLOCK_SRC_MPLL		2 /* MPLL */
+#define SD_EMMC_CLOCK_SRC_DIFF_PLL	3
+#define SD_EMMC_IRQ_ALL			0x3fff
+#define SD_EMMC_RESP_SRAM_OFF		0
 /*#define SD_EMMC_DESC_SET_REG*/
 
-#define SD_EMMC_DESC_REG_CONF					0x4
-#define SD_EMMC_DESC_REG_IRQC					0xC
-#define SD_EMMC_DESC_RESP_STAT				0xfff80000
+#define SD_EMMC_DESC_REG_CONF		0x4
+#define SD_EMMC_DESC_REG_IRQC		0xC
+#define SD_EMMC_DESC_RESP_STAT		0xfff80000
 #define SD_EMMC_IRQ_EN_ALL_INIT
 #define SD_EMMC_REQ_DMA_SGMAP
 /* #define SD_EMMC_CLK_CTRL*/
 /* #define SD_EMMC_DATA_TASKLET */
-#define STAT_POLL_TIMEOUT				0xfffff
-#define STAT_POLL_TIMEOUT				0xfffff
+#define STAT_POLL_TIMEOUT			0xfffff
+#define STAT_POLL_TIMEOUT			0xfffff
 
-#define MMC_RSP_136_NUM					4
-#define MMC_MAX_DEVICE					3
-#define MMC_TIMEOUT						5000
+#define MMC_RSP_136_NUM				4
+#define MMC_MAX_DEVICE				3
+#define MMC_TIMEOUT				5000
 
 /* #define pr_info(a...) */
 #define DBG_LINE_INFO() \
@@ -1618,15 +1653,26 @@ struct sd_emmc_desc_info {
 }
 /* #define DBG_LINE_INFO() */
 /* #define dev_err(a,s) pr_info(KERN_INFO s); */
+/* fixme, those code should not be marco as vairous on chips */
+/* reg0 for BOOT */
+#define BOOT_POLL_UP	(0x3A << 2)
+#define BOOT_POLL_UP_EN (0x48 << 2)
+/* reg1 for GPIOC(card) */
+#define CARD_POLL_UP	(0x3B << 2)
+#define CARD_POLL_UP_EN (0x49 << 2)
+
+/* pinmux for sdcards, gpioC */
+#define PIN_MUX_REG6	(0xb6 << 2)
+#define PIN_MUX_REG9	(0xb9 << 2)
 
 #define AML_MMC_DISABLED_TIMEOUT	100
 #define AML_MMC_SLEEP_TIMEOUT		1000
-#define AML_MMC_OFF_TIMEOUT 8000
+#define AML_MMC_OFF_TIMEOUT		8000
 
 #define SD_EMMC_BOUNCE_REQ_SIZE		(512*1024)
 #define SDHC_BOUNCE_REQ_SIZE		(512*1024)
 #define SDIO_BOUNCE_REQ_SIZE		(128*1024)
-#define MMC_TIMEOUT_MS		20
+#define MMC_TIMEOUT_MS			(20)
 
 #define MESON_SDIO_PORT_A 0
 #define MESON_SDIO_PORT_B 1
@@ -1641,12 +1687,12 @@ extern void amlsd_init_debugfs(struct mmc_host *host);
 
 extern struct mmc_host *sdio_host;
 
-#define	 SPI_BOOT_FLAG				   0
-#define	 NAND_BOOT_FLAG				  1
-#define	 EMMC_BOOT_FLAG				  2
-#define	 CARD_BOOT_FLAG				  3
-#define	 SPI_NAND_FLAG				   4
-#define	 SPI_EMMC_FLAG				   5
+#define	 SPI_BOOT_FLAG			0
+#define	 NAND_BOOT_FLAG			1
+#define	 EMMC_BOOT_FLAG			2
+#define	 CARD_BOOT_FLAG			3
+#define	 SPI_NAND_FLAG			4
+#define	 SPI_EMMC_FLAG			5
 
 #define R_BOOT_DEVICE_FLAG  (aml_read_cbus(ASSIST_POR_CONFIG))
 

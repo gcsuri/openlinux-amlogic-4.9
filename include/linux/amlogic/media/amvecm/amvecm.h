@@ -204,8 +204,8 @@ static inline void WRITE_VPP_REG_BITS(uint32_t reg,
 		const uint32_t len)
 {
 	WRITE_VPP_REG(reg, ((READ_VPP_REG(reg) &
-			     ~(((1L << (len)) - 1) << (start))) |
-			    (((value) & ((1L << (len)) - 1)) << (start))));
+		~(((1L << (len)) - 1) << (start))) |
+		(((value) & ((1L << (len)) - 1)) << (start))));
 }
 
 static inline uint32_t READ_VPP_REG_BITS(uint32_t reg,
@@ -249,24 +249,6 @@ extern void amvecm_sharpness_enable(int sel);
 extern int metadata_read_u32(uint32_t *value);
 extern int metadata_wait(struct vframe_s *vf);
 extern int metadata_sync(uint32_t frame_id, uint64_t pts);
-
-extern void enable_dolby_vision(int enable);
-extern bool is_dolby_vision_enable(void);
-extern bool is_dolby_vision_on(void);
-extern bool for_dolby_vision_certification(void);
-extern void set_dolby_vision_mode(int mode);
-extern int get_dolby_vision_mode(void);
-extern void dolby_vision_set_toggle_flag(int flag);
-extern int dolby_vision_wait_metadata(struct vframe_s *vf);
-extern int dolby_vision_pop_metadata(void);
-extern int dolby_vision_update_metadata(struct vframe_s *vf);
-extern int dolby_vision_process(struct vframe_s *vf);
-extern void dolby_vision_init_receiver(void);
-extern void dolby_vision_vf_put(struct vframe_s *vf);
-extern struct vframe_s *dolby_vision_vf_peek_el(struct vframe_s *vf);
-extern void dolby_vision_dump_setting(int debug_flag);
-extern void dolby_vision_dump_struct(void);
-extern void enable_osd_path(int on, int shadow_mode);
 extern void amvecm_wakeup_queue(void);
 #endif /* AMVECM_H */
 

@@ -397,6 +397,7 @@ void aml_devm_pinctrl_put(struct amlsd_host *host)
 	}
 }
 
+#ifndef SD_EMMC_PIN_CTRL
 static struct pinctrl * __must_check aml_devm_pinctrl_get_select(
 				struct amlsd_host *host, const char *name)
 {
@@ -429,6 +430,34 @@ static struct pinctrl * __must_check aml_devm_pinctrl_get_select(
 	}
 	return p;
 }
+#else /* SD_EMMC_PIN_CTRL */
+static struct pinctrl * __must_check aml_devm_pinctrl_get_select(
+				struct amlsd_host *host, const char *name)
+{
+	u32 val;
+
+	if (!strcmp("sd_clk_cmd_pins", name)) {
+		val = readl(host->pinmux_base + PIN_MUX_REG9);
+		val &= ~0xFFFFFF;
+		val |= 0x110000;
+		writel(val, host->pinmux_base + PIN_MUX_REG9);
+		/* pullup status */
+		pr_info("name %s -> pinmux 9 0x%x\n", name, val);
+
+	} else if (!strcmp("sd_all_pins", name)) {
+		val = readl(host->pinmux_base + PIN_MUX_REG9);
+		val &= ~0xFFFFFF;
+		val |= 0x111111;
+		writel(val, host->pinmux_base + PIN_MUX_REG9);
+		/* pullup status */
+
+		pr_info("name %s -> pinmux 9 0x%x\n", name, val);
+	} else
+		pr_err("E: name %s do nothing.\n", name);
+
+	return NULL;
+}
+#endif /* SD_EMMC_PIN_CTRL */
 
 void of_amlsd_xfer_pre(struct mmc_host *mmc)
 {
@@ -489,10 +518,15 @@ void of_amlsd_xfer_pre(struct mmc_host *mmc)
 			mutex_lock(&host->pinmux_lock);
 			ppin = aml_devm_pinctrl_get_select(host, pinctrl);
 			mutex_unlock(&host->pinmux_lock);
+			/* bringup on ptm for g12 */
+		#ifndef SD_EMMC_PIN_CTRL
 			if (!IS_ERR(ppin)) {
 				/* pdata->host->pinctrl = ppin; */
 				break;
 			}
+		#else
+			break;
+		#endif
 			/* else -> aml_irq_cdin_thread()
 			 *should be using one of the GPIO of card,
 			 * then we should wait here until the GPIO is free,
@@ -635,7 +669,7 @@ static int aml_is_sdjtag(struct amlsd_host *host)
 
 static int aml_is_sduart(struct amlsd_host *host)
 {
-#ifdef CONFIG_MESON_CPU_EMULATOR
+#ifndef SD_EMMC_DEBUG_BOARD
 	return 0;
 #else
 	int in = 0, i;
@@ -671,6 +705,9 @@ static int aml_is_sduart(struct amlsd_host *host)
 /* int n=0; */
 static int aml_uart_switch(struct amlsd_host *host, bool on)
 {
+#ifndef SD_EMMC_DEBUG_BOARD
+	return on;
+#else
 	struct pinctrl *pc;
 	char *name[2] = {
 		"sd_to_ao_uart_pins",
@@ -682,6 +719,7 @@ static int aml_uart_switch(struct amlsd_host *host, bool on)
 	mutex_lock(&host->pinmux_lock);
 	pc = aml_devm_pinctrl_get_select(host, name[on]);
 	mutex_unlock(&host->pinmux_lock);
+#endif
 	return on;
 }
 
@@ -752,6 +790,9 @@ static void aml_jtag_switch_sd(struct amlsd_host *host)
 
 static void aml_jtag_switch_ao(struct amlsd_host *host)
 {
+#ifndef SD_EMMC_DEBUG_BOARD
+
+#else
 	struct pinctrl *pc;
 	int i;
 
@@ -764,6 +805,7 @@ static void aml_jtag_switch_ao(struct amlsd_host *host)
 			break;
 		mdelay(1);
 	}
+#endif
 }
 #endif
 

@@ -144,15 +144,6 @@
 	};
 
 	vpu {
-		compatible = "amlogic, vpu";
-		dev_name = "vpu";
-		status = "ok";
-		clocks = <&clkc CLKID_VPU_MUX
-			&clkc CLKID_VAPB_MUX
-			&clkc CLKID_VPU_INTR>;
-		clock-names = "vpu_clk",
-			"vapb_clk",
-			"vpu_intr";
 		clk_level = <2>;
 		/* 0: 100.0M    1: 166.7M    2: 200.0M    3: 250.0M */
 		/* 4: 333.3M    5: 400.0M    6: 500.0M    7: 666.7M */
@@ -644,10 +635,33 @@
 		fr_auto_policy = <0>;
 	};
 
+	vdac {
+		compatible = "amlogic, vdac";
+		dev_name = "vdac";
+		status = "okay";
+	};
+
 	cvbsout {
-		compatible = "amlogic, cvbsout";
+		compatible = "amlogic, cvbsout-gxl";
 		dev_name = "cvbsout";
 		status = "okay";
+		clocks = <&clkc CLKID_VCLK2_ENCI
+			&clkc CLKID_VCLK2_VENCI0
+			&clkc CLKID_VCLK2_VENCI1
+			&clkc CLKID_DAC_CLK>;
+		clock-names = "venci_top_gate",
+			"venci_0_gate",
+			"venci_1_gate",
+			"vdac_clk_gate";
+
+		/* performance: reg_address, reg_value */
+		/* s805x */
+		performance = <0x1bf0  0x9
+			0x1b56  0x343
+			0x1b12  0x8080
+			0x1b05  0xfd
+			0x1c59  0xf752
+			0xffff  0x0>; /* ending flag */
 	};
 
 	amhdmitx: amhdmitx{
@@ -684,7 +698,7 @@
 		arc_port_mask = <0x0>;
 		interrupts = <0 199 1>;
 		interrupt-names = "hdmi_aocec";
-		pinctrl-names = "hdmitx_aocec";
+		pinctrl-names = "default";
 		pinctrl-0=<&hdmitx_aocec>;
 		reg = <0x0 0xc810023c 0x0 0x4
 		       0x0 0xc8100000 0x0 0x200>;
@@ -786,7 +800,7 @@
 		interrupt-names = "irq_keyup", "irq_keydown";
 	};
 	meson-fb {
-		compatible = "amlogic, meson-fb";
+		compatible = "amlogic, meson-gxl";
 		memory-region = <&logo_reserved>;
 		dev_name = "meson-fb";
 		status = "okay";
@@ -803,14 +817,14 @@
 		logo_addr = "0x3fc00000";
 	};
 	ge2d {
-		compatible = "amlogic, ge2d";
+		compatible = "amlogic, ge2d-gxl";
 		dev_name = "ge2d";
 		status = "okay";
 		interrupts = <0 150 1>;
 		interrupt-names = "ge2d";
 		clocks = <&clkc CLKID_VAPB_MUX>,
-			<&clkc CLKID_GE2D_GATE>,
-			<&clkc CLKID_G2D>;
+			<&clkc CLKID_G2D>,
+			<&clkc CLKID_GE2D_GATE>;
 		clock-names = "clk_vapb_0",
 			"clk_ge2d",
 			"clk_ge2d_gate";

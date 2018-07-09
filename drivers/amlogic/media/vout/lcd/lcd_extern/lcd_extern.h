@@ -34,6 +34,8 @@ extern struct device_node *aml_lcd_extern_get_dts_child(int index);
 extern void lcd_extern_gpio_probe(unsigned char index);
 extern void lcd_extern_gpio_set(unsigned char index, int value);
 extern unsigned int lcd_extern_gpio_get(unsigned char index);
+extern void lcd_extern_pinmux_set(
+	struct aml_lcd_extern_driver_s *ext_drv, int status);
 
 #define LCD_EXTERN_DEFAULT_ENABLE
 
@@ -79,6 +81,10 @@ extern int aml_lcd_extern_mipi_st7701_probe(
 #endif
 #ifdef CONFIG_AMLOGIC_LCD_EXTERN_MIPI_P070ACB
 extern int aml_lcd_extern_mipi_p070acb_probe(
+	struct aml_lcd_extern_driver_s *ext_drv);
+#endif
+#ifdef CONFIG_AMLOGIC_LCD_EXTERN_MIPI_TL050FHV02CT
+extern int aml_lcd_extern_mipi_tl050fhv02ct_probe(
 	struct aml_lcd_extern_driver_s *ext_drv);
 #endif
 

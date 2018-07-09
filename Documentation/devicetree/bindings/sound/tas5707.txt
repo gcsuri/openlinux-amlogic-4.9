@@ -1,6 +1,6 @@
-Texas Instruments TAS5701 Audio amplifier
+Texas Instruments TAS5707 Audio amplifier
 
-The TAS5701 serial control bus communicates through the I2C protocol only. The
+The TAS5707 serial control bus communicates through the I2C protocol only. The
 serial bus is also used for periodic codec fault checking/reporting during
 audio playback. For more product information please see the links below:
 

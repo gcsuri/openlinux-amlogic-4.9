@@ -146,7 +146,8 @@
 		compatible = "amlogic, pm";
 		device_name = "aml_pm";
 		status = "okay";
-		reg = <0x0 0xff80023c 0x0 0x4>;
+		reg = <0x0 0xff8000a8 0x0 0x4>,
+			<0x0 0xff80023c 0x0 0x4>;
 	};
 
 
@@ -449,12 +450,12 @@
 			#size-cells = <2>;
 			ranges = <0x0 0x0 0x0 0xff642000 0x0 0x2000>;
 			clkaudio: audio_clocks {
-				compatible = "amlogic, audio_clocks";
+				compatible = "amlogic, axg-audio-clocks";
 				#clock-cells = <1>;
 				reg = <0x0 0x0 0x0 0xb0>;
 			};
 			ddr_manager {
-				compatible = "amlogic, audio-ddr-manager";
+				compatible = "amlogic, axg-audio-ddr-manager";
 				interrupts = <
 					GIC_SPI 84 IRQ_TYPE_EDGE_RISING
 					GIC_SPI 85 IRQ_TYPE_EDGE_RISING
@@ -778,6 +779,12 @@
 			offset = <18>;
 			size = <16>;
 		};
+	};
+
+	audio_data: audio_data {
+		compatible = "amlogic, audio_data";
+		query_licence_cmd = <0x82000050>;
+		status = "disabled";
 	};
 };/* end of / */
 

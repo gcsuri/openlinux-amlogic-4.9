@@ -316,7 +316,7 @@ static void nr4_config(struct NR4_PARM_s *nr4_parm_p,
 	DI_Wr_reg_bits(NR4_TOP_CTRL, 1, 16, 1);
 	DI_Wr_reg_bits(NR4_TOP_CTRL, 1, 18, 1);
 	DI_Wr_reg_bits(NR4_TOP_CTRL, 1, 3, 1);
-	DI_Wr_reg_bits(NR4_TOP_CTRL, (val&0x1), 5, 1);
+	DI_Wr_reg_bits(NR4_TOP_CTRL, 1, 5, 1);
 	nr4_parm_p->width = width - val - val - 1;
 	nr4_parm_p->height = height - val - val - 1;
 }
@@ -350,9 +350,11 @@ static void linebuffer_config(unsigned short width)
 
 static void nr2_config(unsigned short width, unsigned short height)
 {
-	if (is_meson_txlx_cpu())
+	if (is_meson_txlx_cpu() || is_meson_g12a_cpu()) {
 		DI_Wr_reg_bits(NR4_TOP_CTRL, nr2_en, 2, 1);
-	else {
+		DI_Wr_reg_bits(NR4_TOP_CTRL, nr2_en, 15, 1);
+		DI_Wr_reg_bits(NR4_TOP_CTRL, nr2_en, 17, 1);
+	} else {
 		/*set max height to disable nfram cnt in cue*/
 		if (is_meson_gxlx_cpu())
 			DI_Wr(NR2_FRM_SIZE, (0xfff<<16)|width);
@@ -397,7 +399,7 @@ void nr_all_config(unsigned short width, unsigned short height,
 
 	if (cpu_after_eq(MESON_CPU_MAJOR_ID_GXLX))
 		cue_config(nr_param.pcue_parm, field_type);
-	if (is_meson_txlx_cpu()) {
+	if (is_meson_txlx_cpu() || is_meson_g12a_cpu()) {
 		linebuffer_config(width);
 		nr4_config(nr_param.pnr4_parm, width, height);
 	}
@@ -717,10 +719,10 @@ void adaptive_cue_adjust(unsigned int frame_diff, unsigned int field_diff)
 		/* for clockfuliness clip */
 		if (pcue_parm->field_count >
 				(pcue_parm->glb_mot_fieldnum - 6)) {
-			Wr(NR2_CUE_MODE, 0x50322|(Rd(NR2_CUE_MODE)&0xc00));
+			Wr(NR2_CUE_MODE, 0x50323|(Rd(NR2_CUE_MODE)&0xc00));
 			Wr(NR2_CUE_CON_MOT_TH, 0x03010e01);
 		} else {
-			Wr(NR2_CUE_MODE, 0x00054377|(Rd(NR2_CUE_MODE)&0xc00));
+			Wr(NR2_CUE_MODE, 0x00054375|(Rd(NR2_CUE_MODE)&0xc00));
 			Wr(NR2_CUE_CON_MOT_TH, 0xa03c8c3c);
 		}
 	}
@@ -733,7 +735,7 @@ void nr_process_in_irq(void)
 		cue_process_irq();
 	if (dnr_en)
 		dnr_process(&dnr_param);
-	if (is_meson_txlx_cpu()) {
+	if (is_meson_txlx_cpu() || is_meson_g12a_cpu()) {
 		noise_meter_process(nr_param.pnr4_parm, nr_param.frame_count);
 		luma_enhancement_process(nr_param.pnr4_parm,
 				nr_param.frame_count);
@@ -1047,6 +1049,10 @@ static ssize_t nr_dbg_show(struct device *dev,
 
 	len += sprintf(buff+len,
 		"echo disable/enable to disable/enable nr(nr2/nr4/dnr).\n");
+	len += sprintf(buff+len,
+		"NR4_TOP_CTRL=0x%x DNR_CTRL=0x%x DI_NR_CTRL0=0x%x\n",
+		Rd(NR4_TOP_CTRL), Rd(DNR_CTRL), Rd(DI_NR_CTRL0));
+
 	return len;
 }
 
@@ -1069,7 +1075,7 @@ void nr_hw_init(void)
 }
 void nr_gate_control(bool gate)
 {
-	if (!is_meson_txlx_cpu())
+	if (!is_meson_txlx_cpu() && !is_meson_g12a_cpu())
 		return;
 	if (gate) {
 		/* enable nr auto gate */

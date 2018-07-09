@@ -3579,7 +3579,7 @@ static void ve_dnlp_calculate_reg(void)
 static void ve_dnlp_load_reg(void)
 {
 	if  (dnlp_sel == NEW_DNLP_IN_SHARPNESS) {
-		if (is_meson_gxlx_cpu()) {
+		if (is_meson_gxlx_cpu() || is_meson_txlx_cpu()) {
 			WRITE_VPP_REG(SRSHARP1_DNLP_00, ve_dnlp_reg[0]);
 			WRITE_VPP_REG(SRSHARP1_DNLP_01, ve_dnlp_reg[1]);
 			WRITE_VPP_REG(SRSHARP1_DNLP_02, ve_dnlp_reg[2]);
@@ -3638,7 +3638,7 @@ static void ve_dnlp_load_reg(void)
 static void ve_dnlp_load_def_reg(void)
 {
 	if  (dnlp_sel == NEW_DNLP_IN_SHARPNESS) {
-		if (is_meson_gxlx_cpu()) {
+		if (is_meson_gxlx_cpu() || is_meson_txlx_cpu()) {
 			WRITE_VPP_REG(SRSHARP1_DNLP_00, ve_dnlp_reg[0]);
 			WRITE_VPP_REG(SRSHARP1_DNLP_01, ve_dnlp_reg[1]);
 			WRITE_VPP_REG(SRSHARP1_DNLP_02, ve_dnlp_reg[2]);
@@ -3762,6 +3762,9 @@ void vpp_set_lcd_gamma_table(u16 *data, u32 rgb_mask)
 	int cnt = 0;
 	unsigned long flags = 0;
 
+	if (!(READ_VPP_REG(ENCL_VIDEO_EN) & 0x1))
+		return;
+
 	spin_lock_irqsave(&vpp_lcd_gamma_lock, flags);
 
 	WRITE_VPP_REG_BITS(L_GAMMA_CNTL_PORT,
@@ -3805,6 +3808,9 @@ void amve_write_gamma_table(u16 *data, u32 rgb_mask)
 	int i;
 	int cnt = 0;
 	unsigned long flags = 0;
+
+	if (!(READ_VPP_REG(ENCL_VIDEO_EN) & 0x1))
+		return;
 
 	spin_lock_irqsave(&vpp_lcd_gamma_lock, flags);
 
@@ -3971,10 +3977,12 @@ void ve_enable_dnlp(void)
 	ve_en = 1;
 /* #ifdef NEW_DNLP_IN_SHARPNESS */
 /* if(dnlp_sel == NEW_DNLP_IN_SHARPNESS){ */
-	if (is_meson_gxtvbb_cpu() &&
-		(dnlp_sel == NEW_DNLP_IN_SHARPNESS))
-		WRITE_VPP_REG_BITS(SRSHARP0_DNLP_EN, 1, 0, 1);
-	else
+	if (dnlp_sel == NEW_DNLP_IN_SHARPNESS) {
+		if (is_meson_gxlx_cpu() || is_meson_txlx_cpu())
+			WRITE_VPP_REG_BITS(SRSHARP1_DNLP_EN, 1, 0, 1);
+		else
+			WRITE_VPP_REG_BITS(SRSHARP0_DNLP_EN, 1, 0, 1);
+	} else
 		/* #endif */
 		WRITE_VPP_REG_BITS(VPP_VE_ENABLE_CTRL,
 				1, DNLP_EN_BIT, DNLP_EN_WID);
@@ -3983,17 +3991,14 @@ void ve_enable_dnlp(void)
 void ve_disable_dnlp(void)
 {
 	ve_en = 0;
-/* #ifdef NEW_DNLP_IN_SHARPNESS */
-/* if(dnlp_sel == NEW_DNLP_IN_SHARPNESS){ */
-	if (is_meson_gxtvbb_cpu() &&
-		(dnlp_sel == NEW_DNLP_IN_SHARPNESS))
-		WRITE_VPP_REG_BITS(SRSHARP0_DNLP_EN, 0, 0, 1);
+	if (dnlp_sel == NEW_DNLP_IN_SHARPNESS)
+		if (is_meson_gxlx_cpu() || is_meson_txlx_cpu())
+			WRITE_VPP_REG_BITS(SRSHARP1_DNLP_EN, 0, 0, 1);
+		else
+			WRITE_VPP_REG_BITS(SRSHARP0_DNLP_EN, 0, 0, 1);
 	else
-/* #endif */
-/* { */
 		WRITE_VPP_REG_BITS(VPP_VE_ENABLE_CTRL,
 				0, DNLP_EN_BIT, DNLP_EN_WID);
-/* } */
 }
 
 void ve_set_dnlp(struct ve_dnlp_s *p)

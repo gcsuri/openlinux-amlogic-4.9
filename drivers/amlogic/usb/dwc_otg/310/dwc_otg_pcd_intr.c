@@ -1057,7 +1057,21 @@ int32_t dwc_otg_pcd_handle_enum_done_intr(dwc_otg_pcd_t *pcd)
 	    GET_CORE_IF(pcd)->core_global_regs;
 	uint8_t utmi16b, utmi8b;
 	int speed;
+	dwc_otg_core_if_t *core_if = GET_CORE_IF(pcd);
+
 	DWC_DEBUGPL(DBG_PCD, "SPEED ENUM\n");
+	if (core_if->controller_type == USB_OTG) {
+		if (core_if->phy_interface == 0) {
+			if (pcd->otg_dev->host_plug) {
+				gintsts.d32 = 0;
+				gintsts.b.enumdone = 1;
+				DWC_WRITE_REG32(&GET_CORE_IF(pcd)->
+					core_global_regs->gintsts, gintsts.d32);
+				DWC_DEBUGPL(DBG_PCD, "false speed emun\n");
+				return 1;
+			}
+		}
+	}
 
 	if (GET_CORE_IF(pcd)->snpsid >= OTG_CORE_REV_2_60a) {
 		utmi16b = 6;
@@ -1126,6 +1140,14 @@ int32_t dwc_otg_pcd_handle_enum_done_intr(dwc_otg_pcd_t *pcd)
 	} else {
 		/* Full or low speed */
 		gusbcfg.b.usbtrdtim = 9;
+	}
+
+	/* AMLOGIC USB PHY interface */
+	if (GET_CORE_IF(pcd)->phy_interface == 1)
+		gusbcfg.b.usbtrdtim = 5;
+	else {
+		gusbcfg.b.usbtrdtim = 9;
+		gusbcfg.b.phyif = 0;
 	}
 	DWC_WRITE_REG32(&global_regs->gusbcfg, gusbcfg.d32);
 
@@ -1807,12 +1829,16 @@ static inline void pcd_setup(dwc_otg_pcd_t *pcd)
 		    ("\n\n-----------	 CANNOT handle > 1 setup packet in DMA mode\n\n");
 
 	if ((core_if->snpsid >= OTG_CORE_REV_3_00a)
-	    && (core_if->dma_enable == 1) && (core_if->dma_desc_enable == 0))
+	    && (core_if->dma_enable == 1) && (core_if->dma_desc_enable == 0)) {
+		if (doeptsize0.b.supcnt == 3 && ep0->dwc_ep.stp_rollover == 0) {
+			DWC_ERROR(" !!! Setup packet count\n");
+			return;
+		}
 		ctrl =
 		    (pcd->setup_pkt +
 		     (3 - doeptsize0.b.supcnt - 1 +
 		      ep0->dwc_ep.stp_rollover))->req;
-
+	}
 #ifdef DEBUG_EP0
 	DWC_DEBUGPL(DBG_PCD, "SETUP %02x.%02x v%04x i%04x l%04x\n",
 		    ctrl.bmRequestType, ctrl.bRequest,

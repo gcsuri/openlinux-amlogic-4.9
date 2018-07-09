@@ -19,6 +19,7 @@
 #define __HDMI_TX_DDC_H__
 
 #include <linux/types.h>
+#include <linux/amlogic/media/vout/hdmi_tx/hdmi_tx_module.h>
 
 #define EDID_SLAVE	0x50
 	#define EDIDSEG_ADR	0x30
@@ -74,21 +75,13 @@ enum hdcp_addr {
 	HDCP2_DBG = 0xC0,
 };
 
-/*
- * HDMITX DDC HW related operations
- */
-enum ddc_op {
-	DDC_INIT_DISABLE_PULL_UP_DN,
-	DDC_MUX_DDC,
-	DDC_UNMUX_DDC,
-};
 int hdmitx_ddc_hw_op(enum ddc_op cmd);
 
 void scdc_rd_sink(uint8_t adr, uint8_t *val);
 void scdc_wr_sink(uint8_t adr, uint8_t val);
 uint32_t hdcp_rd_hdcp14_ver(void);
 uint32_t hdcp_rd_hdcp22_ver(void);
-void scdc_config(void *hdev);
+void scdc_config(struct hdmitx_dev *hdev);
 void edid_read_head_8bytes(void);
 
 #endif  /* __HDMI_TX_SCDC_H__ */

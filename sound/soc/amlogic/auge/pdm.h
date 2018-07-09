@@ -29,14 +29,28 @@
 #define PDM_CHANNELS_MIN		1
 #define PDM_CHANNELS_MAX		(8 + 8) /* 8ch pdm in, 8 ch tdmin_lb */
 
-#define PDM_RATES			(SNDRV_PCM_RATE_48000 |\
-						SNDRV_PCM_RATE_32000 |\
-						SNDRV_PCM_RATE_16000 |\
-						SNDRV_PCM_RATE_8000)
+#define PDM_RATES			(SNDRV_PCM_RATE_96000 |\
+					SNDRV_PCM_RATE_64000 |\
+					SNDRV_PCM_RATE_48000 |\
+					SNDRV_PCM_RATE_32000 |\
+					SNDRV_PCM_RATE_16000 |\
+					SNDRV_PCM_RATE_8000)
 
 #define PDM_FORMATS			(SNDRV_PCM_FMTBIT_S16_LE |\
-						SNDRV_PCM_FMTBIT_S24_LE |\
-						SNDRV_PCM_FMTBIT_S32_LE)
+					SNDRV_PCM_FMTBIT_S24_LE |\
+					SNDRV_PCM_FMTBIT_S32_LE)
+
+enum {
+	PDM_RUN_MUTE_VAL = 0,
+	PDM_RUN_MUTE_CHMASK,
+
+	PDM_RUN_MAX,
+};
+
+struct pdm_chipinfo {
+	/* pdm supports mute function */
+	bool mute_fn;
+};
 
 struct aml_pdm {
 	struct device *dev;
@@ -56,6 +70,9 @@ struct aml_pdm {
 	 * the group delay (latency) is from high to low.
 	 */
 	int filter_mode;
+
+	struct pdm_chipinfo *chipinfo;
+	struct snd_kcontrol *controls[PDM_RUN_MAX];
 };
 
 #endif /*__AML_PDM_H__*/

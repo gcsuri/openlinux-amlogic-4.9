@@ -321,13 +321,13 @@
 
 	/* Sound iomap */
 	aml_snd_iomap {
-		compatible = "amlogic, axg-snd-iomap";
+		compatible = "amlogic, snd-iomap";
 		status = "okay";
 		#address-cells=<2>;
 		#size-cells=<2>;
 		ranges;
 		pdm_bus {
-			reg = <0x0 0xFF632000 0x0 0x20>;
+			reg = <0x0 0xFF632000 0x0 0x2000>;
 		};
 		audiobus_base {
 			reg = <0x0 0xFF642000 0x0 0x2000>;
@@ -420,6 +420,15 @@
 				sound-dai = <&aml_pdm>;
 			};
 			codec {
+				/*
+				 *enable external loopback
+				 *and tlv320adc3101 as loopback
+				 */
+				/*sound-dai = <&pdm_codec &tlv320adc3101_32>;*/
+				/*
+				 * enable internal loopback
+				 * or disable loopback
+				 */
 				sound-dai = <&pdm_codec>;
 			};
 		};
@@ -701,7 +710,7 @@
 &pwm_ab {
 	status = "okay";
 };
-
+/* Audio Related start */
 /* for spk board */
 &i2c1 {
 	status = "okay";
@@ -890,7 +899,7 @@
 
 &audiobus {
 	aml_tdma: tdma {
-		compatible = "amlogic, snd-tdma";
+		compatible = "amlogic, axg-snd-tdma";
 		#sound-dai-cells = <0>;
 		dai-tdm-lane-slot-mask-in = <1 0>;
 		dai-tdm-lane-slot-mask-out = <0 1>;
@@ -903,7 +912,7 @@
 	};
 
 	aml_tdmb: tdmb {
-		compatible = "amlogic, snd-tdmb";
+		compatible = "amlogic, axg-snd-tdmb";
 		#sound-dai-cells = <0>;
 		dai-tdm-lane-slot-mask-out = <1 0>;
 		dai-tdm-lane-slot-mask-in = <0 1>;
@@ -916,7 +925,7 @@
 	};
 
 	aml_tdmc: tdmc {
-		compatible = "amlogic, snd-tdmc";
+		compatible = "amlogic, axg-snd-tdmc";
 		#sound-dai-cells = <0>;
 		dai-tdm-lane-slot-mask-out = <1 0>;
 		dai-tdm-lane-slot-mask-in = <0 1>;
@@ -929,7 +938,7 @@
 	};
 
 	aml_spdif: spdif {
-		compatible = "amlogic, snd-spdif";
+		compatible = "amlogic, axg-snd-spdif";
 		#sound-dai-cells = <0>;
 		clocks = <&clkc CLKID_MPLL0
 				&clkc CLKID_FCLK_DIV4
@@ -949,7 +958,7 @@
 	};
 
 	aml_pdm: pdm {
-		compatible = "amlogic, snd-pdm";
+		compatible = "amlogic, axg-snd-pdm";
 		#sound-dai-cells = <0>;
 		clocks = <&clkaudio CLKID_AUDIO_PDM
 			&clkc CLKID_FCLK_DIV3
@@ -969,6 +978,13 @@
 
 	aml_loopback: loopback {
 		compatible = "amlogic, snd-loopback";
+		/*
+		 * external loopback clk config
+		 * enable clk while pdm record data
+		 */
+		/*clocks = <&clkc CLKID_MPLL1>;*/
+		/*clock-names = "datalb_mpll";*/
+
 		/*
 		 * 0: out rate = in data rate;
 		 * 1: out rate = loopback data rate;
@@ -994,8 +1010,11 @@
 		 * 4: PAD_tdminB
 		 * 5: PAD_tdminC
 		 */
+		/*if tdmin_lb >= 3, use external loopback*/
 		datalb_src = <1>;
 		datalb_chnum = <2>;
+		/*config which data pin as loopback*/
+		/*datalb-lane-mask-in = <0 1>;*/
 		datalb_chmask = <0x1>;
 
 		status = "okay";
@@ -1109,6 +1128,8 @@
 		};
 	};
 }; /* end of pinctrl_periphs */
+/* Audio Related End */
+
 
 &spicc_a{
 	status = "disabled";
@@ -1154,4 +1175,7 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&ao_b_uart_pins>;
 	};
+};
+&audio_data{
+	status = "okay";
 };

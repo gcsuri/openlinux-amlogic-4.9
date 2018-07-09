@@ -90,7 +90,11 @@ void am_osd_do_display(
 
 	switch (fb->pixel_format) {
 	case DRM_FORMAT_XRGB8888:
-		format = COLOR_INDEX_32_XRGB;
+		/*
+		 *force convert to ARGB8888 format,
+		 *because overlay layer needs to display
+		 */
+		format = COLOR_INDEX_32_XRGB;//COLOR_INDEX_32_ARGB;
 		break;
 	case DRM_FORMAT_XBGR8888:
 		format = COLOR_INDEX_32_XBGR;
@@ -136,7 +140,7 @@ void am_osd_do_display(
 	meson_fb = container_of(fb, struct am_meson_fb, base);
 	phyaddr = am_meson_gem_object_get_phyaddr(drv, meson_fb->bufp);
 	if (meson_fb->bufp->bscatter)
-		DRM_ERROR("ERROR:am_meson_plane meet a scatter framebuffe.\nr");
+		DRM_ERROR("ERROR:am_meson_plane meet a scatter framebuffer.\n");
 #else
 	/* Update Canvas with buffer address */
 	gem = drm_fb_cma_get_gem_obj(fb, 0);

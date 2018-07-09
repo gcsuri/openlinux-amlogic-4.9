@@ -305,11 +305,13 @@
 				0x0 PCIE_RESET_REG 0x0 PCIE_RESET_SIZE>;
 		reg-names = "elbi", "cfg", "config", "phy", "reset";
 		reset-gpio = <&gpio GPIOX_19 GPIO_ACTIVE_HIGH>;
-		interrupts = <0 177 0>, <0 179 0>;
+		interrupts = <0 177 0>;
 		#interrupt-cells = <1>;
 		bus-range = <0x0 0xff>;
 		#address-cells = <3>;
 		#size-cells = <2>;
+		interrupt-map-mask = <0 0 0 0>;
+		interrupt-map = <0 0 0 0 &gic GIC_SPI 179 IRQ_TYPE_EDGE_RISING>;
 		device_type = "pci";
 		ranges = <0x82000000 0 0 0x0 0xf9c00000 0 0x00300000>;
 			/* non-prefetchable memory */
@@ -342,11 +344,13 @@
 				0x0 PCIE_RESET_REG 0x0 PCIE_RESET_SIZE>;
 		reg-names = "elbi", "cfg", "config", "phy", "reset";
 		reset-gpio = <&gpio GPIOX_19 GPIO_ACTIVE_HIGH>;
-		interrupts = <0 167 0>, <0 169 0>;
+		interrupts = <0 167 0>;
 		#interrupt-cells = <1>;
 		bus-range = <0x0 0xff>;
 		#address-cells = <3>;
 		#size-cells = <2>;
+		interrupt-map-mask = <0 0 0 0>;
+		interrupt-map = <0 0 0 0 &gic GIC_SPI 169 IRQ_TYPE_EDGE_RISING>;
 		device_type = "pci";
 		ranges = <0x81000000 0 0 0 0xfa500000 0x0 0x10000
 			/* downstream I/O */
@@ -401,13 +405,13 @@
 	};
 	/* Sound iomap */
 	aml_snd_iomap {
-		compatible = "amlogic, axg-snd-iomap";
+		compatible = "amlogic, snd-iomap";
 		status = "okay";
 		#address-cells=<2>;
 		#size-cells=<2>;
 		ranges;
 		pdm_bus {
-			reg = <0x0 0xFF632000 0x0 0x20>;
+			reg = <0x0 0xFF632000 0x0 0x2000>;
 		};
 		audiobus_base {
 			reg = <0x0 0xFF642000 0x0 0x2000>;
@@ -759,7 +763,7 @@
 
 &audiobus {
 	aml_tdma: tdma {
-		compatible = "amlogic, snd-tdma";
+		compatible = "amlogic, axg-snd-tdma";
 		#sound-dai-cells = <0>;
 		dai-tdm-lane-slot-mask = <1>;
 		dai-tdm-clk-sel = <0>;
@@ -771,7 +775,7 @@
 	};
 
 	aml_tdmb: tdmb {
-		compatible = "amlogic, snd-tdmb";
+		compatible = "amlogic, axg-snd-tdmb";
 		#sound-dai-cells = <0>;
 		dai-tdm-lane-slot-mask = <1 1 1 1>;
 		dai-tdm-clk-sel = <1>;
@@ -783,7 +787,7 @@
 	};
 
 	aml_tdmc: tdmc {
-		compatible = "amlogic, snd-tdmc";
+		compatible = "amlogic, axg-snd-tdmc";
 		#sound-dai-cells = <0>;
 		dai-tdm-lane-slot-mask-in = <0 1 0 0>;
 		dai-tdm-lane-slot-mask-out = <1 0 1 1>;
@@ -796,7 +800,7 @@
 	};
 
 	aml_spdif: spdif {
-		compatible = "amlogic, snd-spdif";
+		compatible = "amlogic, axg-snd-spdif";
 		#sound-dai-cells = <0>;
 		clocks = <&clkc CLKID_MPLL0
 				&clkc CLKID_FCLK_DIV4
@@ -815,7 +819,7 @@
 		status = "okay";
 	};
 	aml_pdm: pdm {
-		compatible = "amlogic, snd-pdm";
+		compatible = "amlogic, axg-snd-pdm";
 		#sound-dai-cells = <0>;
 		clocks = <&clkaudio CLKID_AUDIO_PDM
 			&clkc CLKID_FCLK_DIV3
@@ -984,4 +988,6 @@
 		pinctrl-0 = <&ao_b_uart_pins>;
 	};
 };
-
+&audio_data{
+	status = "okay";
+};

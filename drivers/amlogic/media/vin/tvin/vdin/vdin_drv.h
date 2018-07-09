@@ -82,7 +82,6 @@
 /*values of vdin isr bypass check flag */
 #define VDIN_BYPASS_STOP_CHECK          0x00000001
 #define VDIN_BYPASS_CYC_CHECK           0x00000002
-#define VDIN_BYPASS_VSYNC_CHECK         0x00000004
 #define VDIN_BYPASS_VGA_CHECK           0x00000008
 #define VDIN_CANVAS_MAX_CNT				9
 
@@ -212,22 +211,22 @@ struct vdin_dev_s {
 	unsigned int canvas_alin_w;
 	unsigned int canvas_max_size;
 	unsigned int canvas_max_num;
+	/*before G12A:32byte(256bit)align;
+	 *after G12A:64byte(512bit)align
+	 */
+	unsigned int canvas_align;
 
 	unsigned int irq;
 	unsigned int rdma_irq;
 	char irq_name[12];
 	/* address offset(vdin0/vdin1/...) */
 	unsigned int addr_offset;
-	unsigned int vs_cnt_valid;
-	unsigned int vs_cnt_ignore;
 
 	unsigned int unstable_flag;
 	unsigned int abnormal_cnt;
 	unsigned int stamp;
 	unsigned int hcnt64;
 	unsigned int cycle;
-	unsigned int hcnt64_tag;
-	unsigned int cycle_tag;
 	unsigned int start_time;/* ms vdin start time */
 	int rdma_handle;
 

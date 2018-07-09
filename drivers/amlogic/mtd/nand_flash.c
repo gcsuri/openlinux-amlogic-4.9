@@ -377,7 +377,7 @@ struct aml_nand_flash_dev aml_nand_flash_ids[] = {
 		0,
 		0,
 		(NAND_TIMING_MODE5 | NAND_ECC_BCH8_MODE)},
-	{"ESMT SLC 128MiB 3.3V 8-bit F59L1G81MA (2Y)",
+	{"ESMT SLC 128MiB 3.3V 8-bit F59L1G81Mxxx",
 		{NAND_ID_ESMT, 0xd1, 0x80, 0x95, 0x40, 0x7f},
 		2048,
 		128,
@@ -417,6 +417,18 @@ struct aml_nand_flash_dev aml_nand_flash_ids[] = {
 		{NAND_MFR_TOSHIBA, 0xda, 0x90, 0x15, 0x76},
 		2048,
 		256,
+		0x20000,
+		64,
+		1,
+		20,
+		25,
+		0,
+		0,
+		(NAND_TIMING_MODE5 | NAND_ECC_BCH8_MODE)},
+	{"A revision NAND 2Gib TC58BVG0S3HTA00 ",
+		{NAND_MFR_TOSHIBA, 0xf1, 0x80, 0x15, 0xf2},
+		2048,
+		128,
 		0x20000,
 		64,
 		1,
@@ -1404,7 +1416,6 @@ static struct aml_nand_flash_dev *aml_nand_get_flash_type(struct mtd_info *mtd,
 	return type;
 }
 
-
 static int aml_nand_scan_ident(struct mtd_info *mtd, int maxchips)
 {
 	int i, busw, nand_maf_id, valid_chip_num = 1;
@@ -1413,6 +1424,11 @@ static int aml_nand_scan_ident(struct mtd_info *mtd, int maxchips)
 	struct aml_nand_flash_dev *aml_type;
 	u8 dev_id[MAX_ID_LEN], onfi_features[4];
 	unsigned int temp_chip_shift;
+
+	chip->cmdfunc = aml_nand_command;
+	chip->waitfunc = aml_nand_wait;
+	chip->erase = aml_nand_erase_cmd;
+	chip->write_page = aml_nand_write_page;
 
 	/* Get buswidth to select the correct functions */
 	busw = chip->options & NAND_BUSWIDTH_16;
@@ -1537,11 +1553,6 @@ static int aml_nand_scan_ident(struct mtd_info *mtd, int maxchips)
 	/* overide bootloader's size consdering info page */
 	if (!strcmp(mtd->name, NAND_BOOT_NAME))
 		mtd->size =  BOOT_TOTAL_PAGES * mtd->writesize;
-
-	chip->cmdfunc = aml_nand_command;
-	chip->waitfunc = aml_nand_wait;
-	chip->erase = aml_nand_erase_cmd;
-	chip->write_page = aml_nand_write_page;
 
 	return 0;
 }

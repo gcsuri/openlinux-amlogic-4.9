@@ -34,6 +34,8 @@
 #include "../../osd/osd_rdma.h"
 
 #include "amcsc.h"
+#include "set_hdr2_v0.h"
+#include <linux/amlogic/media/amdolbyvision/dolby_vision.h>
 
 #define pr_csc(fmt, args...)\
 	do {\
@@ -201,6 +203,10 @@ MODULE_PARM_DESC(force_csc_type, "\n force colour space convert type\n");
 static uint cur_hdr_support;
 module_param(cur_hdr_support, uint, 0664);
 MODULE_PARM_DESC(cur_hdr_support, "\n cur_hdr_support\n");
+
+static uint cur_output_mode;
+module_param(cur_output_mode, uint, 0664);
+MODULE_PARM_DESC(cur_output_mode, "\n cur_output_mode\n");
 
 static uint range_control;
 module_param(range_control, uint, 0664);
@@ -2579,6 +2585,97 @@ static void vpp_set_mtx_en_read(void)
 				OSD1_MTX_EN_MASK);
 }
 
+/* dvll output 12bit */
+static int dvll_RGB_to_YUV709l_coeff[MATRIX_5x3_COEF_SIZE] = {
+	0, 0, 0, /* pre offset */
+	COEFF_NORM(0.181873), COEFF_NORM(0.611831), COEFF_NORM(0.061765),
+	COEFF_NORM(-0.100251), COEFF_NORM(-0.337249), COEFF_NORM(0.437500),
+	COEFF_NORM(0.437500), COEFF_NORM(-0.397384), COEFF_NORM(-0.040116),
+	0, 0, 0, /* 10'/11'/12' */
+	0, 0, 0, /* 20'/21'/22' */
+	64, 512, 512, /* offset */
+	0, 0, 0 /* mode, right_shift, clip_en */
+};
+static int *cur_post_mtx = bypass_coeff;
+static int cur_post_on = CSC_OFF;
+static int32_t *post_mtx_backup;
+static int32_t post_on_backup;
+static bool restore_post_table;
+/* coeff: pointer to target coeff array */
+/* bits: how many bits for target coeff, could be 10 ~ 12, default 10 */
+int enable_rgb_to_yuv_matrix_for_dvll(
+	int32_t on, uint32_t *coeff_orig, uint32_t bits)
+{
+	int32_t i, j;
+	uint32_t coeff01, coeff23, coeff45, coeff67;
+	uint32_t coeff8, scale, shift, offset[3];
+	int32_t *coeff = dvll_RGB_to_YUV709l_coeff;
+
+	if ((bits < 10) || (bits > 12))
+		return -1;
+	if (on && !coeff_orig)
+		return -2;
+	if (on) {
+		/* only store the start one */
+		if (cur_post_mtx !=
+			dvll_RGB_to_YUV709l_coeff) {
+			post_mtx_backup = cur_post_mtx;
+			post_on_backup = cur_post_on;
+		}
+		coeff01 = coeff_orig[0];
+		coeff23 = coeff_orig[1];
+		coeff45 = coeff_orig[2];
+		coeff67 = coeff_orig[3];
+		coeff8 = coeff_orig[4] & 0xffff;
+		scale =  (coeff_orig[4] >> 16) & 0x0f;
+		offset[0] = 0; /* coeff_orig[5]; */
+		offset[1] = 0; /* coeff_orig[6]; */
+		offset[2] = 0; /* coeff_orig[7]; */
+		if (scale >= bits) {
+			shift = scale - bits;
+			coeff[5] = (coeff01 & 0xffff) >> shift;
+			coeff[3] = ((coeff01 >> 16) & 0xffff) >> shift;
+			coeff[4] = (coeff23 & 0xffff) >> shift;
+			coeff[8] = ((coeff23 >> 16) & 0xffff) >> shift;
+			coeff[6] = (coeff45 & 0xffff) >> shift;
+			coeff[7] = ((coeff45 >> 16) & 0xffff) >> shift;
+			coeff[11] = (coeff67 & 0xffff) >> shift;
+			coeff[9] = ((coeff67 >> 16) & 0xffff) >> shift;
+			coeff[10] = (coeff8 & 0xffff) >> shift;
+		} else {
+			shift = bits - scale;
+			coeff[5] = (coeff01 & 0xffff) << shift;
+			coeff[3] = ((coeff01 >> 16) & 0xffff) << shift;
+			coeff[4] = (coeff23 & 0xffff) << shift;
+			coeff[8] = ((coeff23 >> 16) & 0xffff) << shift;
+			coeff[6] = (coeff45 & 0xffff) << shift;
+			coeff[7] = ((coeff45 >> 16) & 0xffff) << shift;
+			coeff[11] = (coeff67 & 0xffff) << shift;
+			coeff[9] = ((coeff67 >> 16) & 0xffff) << shift;
+			coeff[10] = (coeff8 & 0xffff) << shift;
+		}
+		coeff[18] = offset[0] >> (12 - bits);
+		coeff[19] = offset[1] >> (12 - bits);
+		coeff[20] = offset[2] >> (12 - bits);
+		for (i = 3; i < 12; i++) {
+			if (coeff[i] & (1 << bits))
+				for (j = bits + 1; j <= 12; j++)
+					coeff[i] |= 1 << j;
+		}
+		coeff[22] = bits - 10;
+		set_vpp_matrix(VPP_MATRIX_POST,
+			coeff, CSC_ON);
+		vpp_set_mtx_en_write();
+		restore_post_table = true;
+	} else if (restore_post_table) {
+		set_vpp_matrix(VPP_MATRIX_POST,
+			post_mtx_backup, post_on_backup);
+		vpp_set_mtx_en_write();
+		restore_post_table = false;
+	}
+	return 0;
+}
+EXPORT_SYMBOL(enable_rgb_to_yuv_matrix_for_dvll);
 static void vpp_set_matrix(
 		enum vpp_matrix_sel_e vd1_or_vd2_or_post,
 		unsigned int on,
@@ -2844,6 +2941,7 @@ static struct vframe_master_display_colour_s cur_master_display_colour = {
 #define SIG_HDR_MODE	0x10
 #define SIG_HDR_SUPPORT	0x20
 #define SIG_WB_CHG	0x40
+#define SIG_OP_CHG	0x200
 
 int signal_type_changed(struct vframe_s *vf, struct vinfo_s *vinfo)
 {
@@ -2998,6 +3096,7 @@ int signal_type_changed(struct vframe_s *vf, struct vinfo_s *vinfo)
 	if (cur_knee_factor != knee_factor) {
 		pr_csc("Knee factor changed.\n");
 		change_flag |= SIG_KNEE_FACTOR;
+		cur_knee_factor = knee_factor;
 	}
 	if (cur_hdr_process_mode != hdr_process_mode) {
 		pr_csc("HDR mode changed.\n");
@@ -3012,7 +3111,11 @@ int signal_type_changed(struct vframe_s *vf, struct vinfo_s *vinfo)
 		change_flag |= SIG_HDR_SUPPORT;
 		cur_hdr_support = vinfo->hdr_info.hdr_support & 0x4;
 	}
-
+	if (cur_output_mode != vinfo->viu_color_fmt) {
+		pr_csc("output mode changed.\n");
+		change_flag |= SIG_OP_CHG;
+		cur_output_mode = vinfo->viu_color_fmt;
+	}
 	if ((cur_eye_protect_mode != wb_val[0]) ||
 		(cur_eye_protect_mode == 1)) {
 		pr_csc(" eye protect mode changed.\n");
@@ -4894,7 +4997,7 @@ static int vpp_matrix_update(
 	if ((cur_csc_type != csc_type)
 		|| (signal_change_flag
 		& (SIG_PRI_INFO | SIG_KNEE_FACTOR | SIG_HDR_MODE |
-		SIG_HDR_SUPPORT))) {
+		SIG_HDR_SUPPORT | SIG_OP_CHG))) {
 		/* decided by edid or panel info or user setting */
 		if ((csc_type == VPP_MATRIX_BT2020YUV_BT2020RGB) &&
 			hdr_process_mode) {
@@ -4910,25 +5013,53 @@ static int vpp_matrix_update(
 				if (get_hdr_type() & HLG_FLAG)
 					need_adjust_contrast_saturation =
 						hlg_process(csc_type, vinfo, p);
-				else
-					need_adjust_contrast_saturation =
-						hdr_process(csc_type, vinfo, p);
+				else {
+					if (get_cpu_type() ==
+						MESON_CPU_MAJOR_ID_G12A) {
+						hdr2sdr_func(VD1_HDR);
+						hdrbypass_func(OSD1_HDR);
+					} else
+						need_adjust_contrast_saturation
+							= hdr_process(csc_type,
+								vinfo, p);
+				}
 			}
 		} else {
 			if ((csc_type < VPP_MATRIX_BT2020YUV_BT2020RGB) &&
-				sdr_process_mode)
+				sdr_process_mode) {
 				/* for gxl and gxm SDR to HDR process */
-				sdr_hdr_process(csc_type, vinfo, p);
-			else {
+				if (get_cpu_type() ==
+					MESON_CPU_MAJOR_ID_G12A) {
+					sdr2hdr_func(VD1_HDR);
+					sdr2hdr_func(OSD1_HDR);
+				} else
+					sdr_hdr_process(csc_type,
+						vinfo, p);
+			} else {
 				/* for gxtvbb and gxl HDR bypass process */
 				if ((get_hdr_type() & HLG_FLAG) &&
 					(vinfo->viu_color_fmt !=
 						COLOR_FMT_RGB444))
 					bypass_hlg_process(csc_type, vinfo, p);
-				else
-					bypass_hdr_process(csc_type, vinfo, p);
+				else {
+					if (get_cpu_type() ==
+						MESON_CPU_MAJOR_ID_G12A) {
+						hdrbypass_func(VD1_HDR);
+						hdrbypass_func(OSD1_HDR);
+					} else
+						bypass_hdr_process(csc_type,
+							vinfo, p);
+				}
 			}
 		}
+		if (get_cpu_type() == MESON_CPU_MAJOR_ID_G12A) {
+			if (vinfo->viu_color_fmt != COLOR_FMT_RGB444)
+				mtx_setting(POST2_MTX, MATRIX_NULL, MTX_OFF);
+			else
+				mtx_setting(POST2_MTX,
+					MATRIX_YUV709_RGB, MTX_ON);
+		}
+
 		if (cur_hdr_process_mode != hdr_process_mode) {
 			cur_hdr_process_mode = hdr_process_mode;
 			pr_csc("hdr_process_mode changed to %d",
@@ -4992,11 +5123,13 @@ static struct vframe_s *last_vf;
 static int last_vf_signal_type;
 static int null_vf_cnt;
 static int prev_hdr_support;
+static int prev_output_mode;
 
 static unsigned int fg_vf_sw_dbg;
 unsigned int null_vf_max = 1;
 module_param(null_vf_max, uint, 0664);
 MODULE_PARM_DESC(null_vf_max, "\n null_vf_max\n");
+
 int amvecm_matrix_process(
 	struct vframe_s *vf, struct vframe_s *vf_rpt, int flags)
 {
@@ -5062,6 +5195,11 @@ int amvecm_matrix_process(
 			null_vf_cnt = 0;
 			prev_hdr_support = vinfo->hdr_info.hdr_support;
 		}
+		/* handle change between output mode*/
+		if (prev_output_mode != vinfo->viu_color_fmt) {
+			null_vf_cnt = 0;
+			prev_output_mode =	vinfo->viu_color_fmt;
+		}
 		/* handle eye protect mode */
 		if (cur_eye_protect_mode != wb_val[0])
 			null_vf_cnt = 0;
@@ -5072,7 +5210,8 @@ int amvecm_matrix_process(
 		/* when sdr mode change */
 		if ((vinfo->hdr_info.hdr_support & 0x4) &&
 			((get_cpu_type() == MESON_CPU_MAJOR_ID_GXL) ||
-			(get_cpu_type() == MESON_CPU_MAJOR_ID_GXM)))
+			(get_cpu_type() == MESON_CPU_MAJOR_ID_GXM) ||
+			(get_cpu_type() == MESON_CPU_MAJOR_ID_G12A)))
 			if (((sdr_process_mode != 1) && (sdr_mode > 0))
 				|| ((sdr_process_mode > 0) && (sdr_mode == 0)))
 				null_vf_cnt = toggle_frame;

@@ -508,6 +508,8 @@ struct dsi_phy_s {
 	unsigned int clk_pre;
 	unsigned int init;
 	unsigned int wakeup;
+
+	unsigned int state_change;
 };
 
 struct dsi_vid_s {
@@ -530,7 +532,7 @@ struct dsi_vid_s {
 };
 
 #define DSI_CMD_SIZE_MAX		2000
-/* #define DSI_CMD_READ_VALID   // DPHY don't support for M8 */
+#define DSI_CMD_READ_VALID
 
 extern void mipi_dsi_print_info(struct lcd_config_s *pconf);
 extern int lcd_mipi_dsi_init_table_detect(struct device_node *m_node,

@@ -110,10 +110,10 @@ static ssize_t sig_det_store(struct device *dev,
 	if (!buf)
 		return len;
 	/* port = simple_strtol(buf, NULL, 10); */
-	if (kstrtol(buf, 10, &val) == 0)
-		port = val;
-	else
+	if (kstrtol(buf, 10, &val) < 0)
 		return -EINVAL;
+	else
+		port = val;
 
 	frontend = tvin_get_frontend(port, 0);
 	if (frontend && frontend->dec_ops &&
@@ -144,6 +144,10 @@ static ssize_t vdin_attr_show(struct device *dev,
 		"/sys/class/vdin/vdinx/attr.\n");
 	len += sprintf(buf+len,
 		"echo v4l2start bt656/viuin/video/isp h_actve v_active");
+	len += sprintf(buf+len,
+		"viuin/viu_wb0_vd1/viu_wb0_vd1/viu_wb0_post_blend/viu_wb0_osd1/viu_wb0_osd2");
+	len += sprintf(buf+len,
+		"viuin2/viu2_wb0_vd1/viu2_wb0_vd1/viu2_wb0_post_blend/viu2_wb0_osd1/viu2_wb0_osd2");
 	len += sprintf(buf+len,
 		"frame_rate cfmt dfmt scan_fmt > /sys/class/vdin/vdinx/attr.\n");
 	len += sprintf(buf+len,
@@ -308,14 +312,15 @@ static void vdin_dump_mem(char *path, struct vdin_dev_s *devp)
 {
 	struct file *filp = NULL;
 	loff_t pos = 0;
-	loff_t i = 0;
+	loff_t i = 0, j = 0;
+	unsigned int mem_size = 0;
 	void *buf = NULL;
 	void *vfbuf[VDIN_CANVAS_MAX_CNT];
 	mm_segment_t old_fs = get_fs();
-
 	set_fs(KERNEL_DS);
 	filp = filp_open(path, O_RDWR|O_CREAT, 0666);
 
+	mem_size = devp->canvas_active_w * devp->canvas_h;
 	for (i = 0; i < VDIN_CANVAS_MAX_CNT; i++)
 		vfbuf[i] = NULL;
 	if (IS_ERR(filp)) {
@@ -328,7 +333,7 @@ static void vdin_dump_mem(char *path, struct vdin_dev_s *devp)
 		return;
 	}
 	for (i = 0; i < devp->canvas_max_num; i++) {
-		pos = devp->canvas_max_size * i;
+		pos = mem_size * i;
 		if (devp->cma_config_flag == 0x1)
 			buf = codec_mm_phys_to_virt(devp->mem_start +
 				devp->canvas_max_size*i);
@@ -340,11 +345,18 @@ static void vdin_dump_mem(char *path, struct vdin_dev_s *devp)
 		else
 			buf = phys_to_virt(devp->mem_start +
 				devp->canvas_max_size*i);
-		if (devp->cma_config_flag & 0x100)
-			vfs_write(filp, vfbuf[i], devp->canvas_max_size, &pos);
-		else
-			vfs_write(filp, buf, devp->canvas_max_size, &pos);
-
+		/*only write active data*/
+		for (j = 0; j < devp->canvas_h; j++) {
+			if (devp->cma_config_flag & 0x100) {
+				vfs_write(filp, vfbuf[i],
+					devp->canvas_active_w, &pos);
+				vfbuf[i] += devp->canvas_w;
+			} else {
+				vfs_write(filp, buf,
+					devp->canvas_active_w, &pos);
+				buf += devp->canvas_w;
+			}
+		}
 		pr_info("write buffer %lld of %2u  to %s.\n",
 				i, devp->canvas_max_num, path);
 	}
@@ -431,8 +443,10 @@ static void vdin_dump_state(struct vdin_dev_s *devp)
 	struct vf_pool *vfp = devp->vfp;
 	pr_info("h_active = %d, v_active = %d\n",
 		devp->h_active, devp->v_active);
-	pr_info("canvas_w = %d, canvas_h = %d, canvas_alin_w = %d\n",
-		devp->canvas_w, devp->canvas_h, devp->canvas_alin_w);
+	pr_info("canvas_w = %d, canvas_h = %d\n",
+		devp->canvas_w, devp->canvas_h);
+	pr_info("canvas_alin_w = %d, canvas_active_w = %d\n",
+		devp->canvas_alin_w, devp->canvas_active_w);
 	if ((devp->cma_config_en != 1) || !(devp->cma_config_flag & 0x1))
 		pr_info("mem_start = %ld, mem_size = %d\n",
 			devp->mem_start, devp->mem_size);
@@ -564,11 +578,10 @@ static void vdin_write_mem(
 	struct vf_pool *p = devp->vfp;
 	/* vtype = simple_strtol(type, NULL, 10); */
 
-	if (kstrtol(type, 10, &val) == 0)
-		vtype = val;
-	else
+	if (kstrtol(type, 10, &val) < 0)
 		return;
 
+	vtype = val;
 	if (!devp->curr_wr_vfe) {
 		devp->curr_wr_vfe = provider_vf_get(devp->vfp);
 		if (!devp->curr_wr_vfe) {
@@ -961,11 +974,77 @@ start_chk:
 			param.port = TVIN_PORT_CAMERA;
 			pr_info(" port is TVIN_PORT_CAMERA\n");
 		} else if (!strcmp(parm[1], "viuin")) {
-			param.port = TVIN_PORT_VIU;
+			param.port = TVIN_PORT_VIU1;
 			pr_info(" port is TVIN_PORT_VIU\n");
 		} else if (!strcmp(parm[1], "video")) {
-			param.port = TVIN_PORT_VIDEO;
-			pr_info(" port is TVIN_PORT_VIDEO\n");
+			param.port = TVIN_PORT_VIU1_VIDEO;
+			pr_info(" port is TVIN_PORT_VIU_VIDEO\n");
+		} else if (!strcmp(parm[1], "viu_wb0_vd1")) {
+			param.port = TVIN_PORT_VIU1_WB0_VD1;
+			pr_info(" port is TVIN_PORT_VIU_WB0_VD1\n");
+		} else if (!strcmp(parm[1], "viu_wb0_vd2")) {
+			param.port = TVIN_PORT_VIU1_WB0_VD2;
+			pr_info(" port is TVIN_PORT_VIU_WB0_VD2\n");
+		} else if (!strcmp(parm[1], "viu_wb0_osd1")) {
+			param.port = TVIN_PORT_VIU1_WB0_OSD1;
+			pr_info(" port is TVIN_PORT_VIU_WB0_OSD1\n");
+		} else if (!strcmp(parm[1], "viu_wb0_osd2")) {
+			param.port = TVIN_PORT_VIU1_WB0_OSD2;
+			pr_info(" port is TVIN_PORT_VIU_WB0_OSD2\n");
+		} else if (!strcmp(parm[1], "viu_wb0_post_blend")) {
+			param.port = TVIN_PORT_VIU1_WB0_POST_BLEND;
+			pr_info(" port is TVIN_PORT_VIU_WB0_POST_BLEND\n");
+		} else if (!strcmp(parm[1], "viu_wb1_vd1")) {
+			param.port = TVIN_PORT_VIU1_WB1_VD1;
+			pr_info(" port is TVIN_PORT_VIU_WB1_VD1\n");
+		} else if (!strcmp(parm[1], "viu_wb1_vd2")) {
+			param.port = TVIN_PORT_VIU1_WB1_VD2;
+			pr_info(" port is TVIN_PORT_VIU_WB1_VD2\n");
+		} else if (!strcmp(parm[1], "viu_wb1_osd1")) {
+			param.port = TVIN_PORT_VIU1_WB1_OSD1;
+			pr_info(" port is TVIN_PORT_VIU_WB1_OSD1\n");
+		} else if (!strcmp(parm[1], "viu_wb0_osd2")) {
+			param.port = TVIN_PORT_VIU1_WB1_OSD2;
+			pr_info(" port is TVIN_PORT_VIU_WB1_OSD2\n");
+		} else if (!strcmp(parm[1], "viu_wb1_post_blend")) {
+			param.port = TVIN_PORT_VIU1_WB1_POST_BLEND;
+			pr_info(" port is TVIN_PORT_VIU_WB1_POST_BLEND\n");
+		} else if (!strcmp(parm[1], "viuin2")) {
+			param.port = TVIN_PORT_VIU2;
+			pr_info(" port is TVIN_PORT_VIU\n");
+		} else if (!strcmp(parm[1], "video2")) {
+			param.port = TVIN_PORT_VIU2_VIDEO;
+			pr_info(" port is TVIN_PORT_VIU_VIDEO\n");
+		} else if (!strcmp(parm[1], "viu2_wb0_vd1")) {
+			param.port = TVIN_PORT_VIU2_WB0_VD1;
+			pr_info(" port is TVIN_PORT_VIU_WB0_VD1\n");
+		} else if (!strcmp(parm[1], "viu2_wb0_vd2")) {
+			param.port = TVIN_PORT_VIU2_WB0_VD2;
+			pr_info(" port is TVIN_PORT_VIU_WB0_VD2\n");
+		} else if (!strcmp(parm[1], "viu2_wb0_osd1")) {
+			param.port = TVIN_PORT_VIU2_WB0_OSD1;
+			pr_info(" port is TVIN_PORT_VIU_WB0_OSD1\n");
+		} else if (!strcmp(parm[1], "viu2_wb0_osd2")) {
+			param.port = TVIN_PORT_VIU2_WB0_OSD2;
+			pr_info(" port is TVIN_PORT_VIU_WB0_OSD2\n");
+		} else if (!strcmp(parm[1], "viu2_wb0_post_blend")) {
+			param.port = TVIN_PORT_VIU2_WB0_POST_BLEND;
+			pr_info(" port is TVIN_PORT_VIU_WB0_POST_BLEND\n");
+		} else if (!strcmp(parm[1], "viu2_wb1_vd1")) {
+			param.port = TVIN_PORT_VIU2_WB1_VD1;
+			pr_info(" port is TVIN_PORT_VIU_WB1_VD1\n");
+		} else if (!strcmp(parm[1], "viu2_wb1_vd2")) {
+			param.port = TVIN_PORT_VIU2_WB1_VD2;
+			pr_info(" port is TVIN_PORT_VIU_WB1_VD2\n");
+		} else if (!strcmp(parm[1], "viu2_wb1_osd1")) {
+			param.port = TVIN_PORT_VIU2_WB1_OSD1;
+			pr_info(" port is TVIN_PORT_VIU_WB1_OSD1\n");
+		} else if (!strcmp(parm[1], "viu2_wb0_osd2")) {
+			param.port = TVIN_PORT_VIU2_WB1_OSD2;
+			pr_info(" port is TVIN_PORT_VIU_WB1_OSD2\n");
+		} else if (!strcmp(parm[1], "viu2_wb1_post_blend")) {
+			param.port = TVIN_PORT_VIU2_WB1_POST_BLEND;
+			pr_info(" port is TVIN_PORT_VIU_WB1_POST_BLEND\n");
 		} else if (!strcmp(parm[1], "isp")) {
 			param.port = TVIN_PORT_ISP;
 			pr_info(" port is TVIN_PORT_ISP\n");
@@ -1558,6 +1637,7 @@ static ssize_t vdin_cm2_show(struct device *dev,
 	     struct device_attribute *attr,
 					     char *buf)
 {
+	int len = 0;
 	struct vdin_dev_s *devp;
 	unsigned int addr_port = VDIN_CHROMA_ADDR_PORT;
 	unsigned int data_port = VDIN_CHROMA_DATA_PORT;
@@ -1567,17 +1647,17 @@ static ssize_t vdin_cm2_show(struct device *dev,
 		addr_port = VDIN_CHROMA_ADDR_PORT + devp->addr_offset;
 		data_port = VDIN_CHROMA_DATA_PORT + devp->addr_offset;
 	}
-	pr_info("addr_port[0x%x] data_port[0x%x]\n",
-		addr_port, data_port);
 
-	pr_info("Usage:");
-	pr_info(" echo wm addr data0 data1 data2 data3 data4 >");
-	pr_info("/sys/class/vdin/vdin0/cm2\n");
-	pr_info(" echo rm addr > / sys/class/vdin/vdin0/cm2\n");
-	pr_info(" echo wm addr data0 data1 data2 data3 data4 >");
-	pr_info("/sys/class/vdin/vdin1/cm2\n");
-	pr_info(" echo rm addr > / sys/class/vdin/vdin1/cm2\n");
-return 0;
+	len += sprintf(buf+len, "addr_port[0x%x] data_port[0x%x]\n",
+		addr_port, data_port);
+	len += sprintf(buf+len, "Usage:");
+	len += sprintf(buf+len, "echo wm addr data0 data1 data2 data3 data4 >");
+	len += sprintf(buf+len, "/sys/class/vdin/vdin0/cm2\n");
+	len += sprintf(buf+len, "echo rm addr > / sys/class/vdin/vdin0/cm2\n");
+	len += sprintf(buf+len, "echo wm addr data0 data1 data2 data3 data4 >");
+	len += sprintf(buf+len, "/sys/class/vdin/vdin1/cm2\n");
+	len += sprintf(buf+len, "echo rm addr > / sys/class/vdin/vdin1/cm2\n");
+	return len;
 }
 
 static ssize_t vdin_cm2_store(struct device *dev,

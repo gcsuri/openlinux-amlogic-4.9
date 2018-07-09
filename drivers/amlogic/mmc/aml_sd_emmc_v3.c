@@ -52,10 +52,11 @@ int meson_mmc_clk_init_v3(struct amlsd_host *host)
 	struct amlsd_platform *pdata = host->pdata;
 
 	writel(0, host->base + SD_EMMC_CLOCK_V3);
+#ifndef SD_EMMC_CLK_CTRL
 	ret = aml_emmc_clktree_init(host);
 	if (ret)
 		return ret;
-
+#endif
 	/* init SD_EMMC_CLOCK to sane defaults w/min clock rate */
 	vclkc = 0;
 	pclkc->div = 60;	 /* 400KHz */
@@ -92,11 +93,12 @@ static int meson_mmc_clk_set_rate_v3(struct amlsd_host *host,
 	struct mmc_host *mmc = host->mmc;
 	struct amlsd_platform *pdata = host->pdata;
 	int ret = 0;
-	struct clk *src0_clk = NULL;
+
 #ifdef SD_EMMC_CLK_CTRL
 	u32 clk_rate, clk_div, clk_src_sel;
 	struct amlsd_platform *pdata = host->pdata;
 #else
+	struct clk *src0_clk = NULL;
 	u32 vcfg = 0;
 	struct sd_emmc_config *conf = (struct sd_emmc_config *)&vcfg;
 #endif
@@ -239,9 +241,12 @@ static void aml_sd_emmc_set_timing_v3(struct amlsd_host *host,
 			clkc->core_phase  = 2;
 		pr_info("%s: try set sd/emmc to DDR mode\n",
 			mmc_hostname(host->mmc));
-	} else if (timing == MMC_TIMING_MMC_HS)
-		clkc->core_phase = 3;
-	else if ((timing == MMC_TIMING_MMC_HS200)
+	} else if (timing == MMC_TIMING_MMC_HS) {
+		if (host->data->chip_type < MMC_CHIP_G12A)
+			clkc->core_phase = 3;
+		else
+			clkc->core_phase = 2;
+	} else if ((timing == MMC_TIMING_MMC_HS200)
 			|| ((timing == MMC_TIMING_SD_HS)
 				&& aml_card_type_non_sdio(pdata))
 			|| (timing == MMC_TIMING_UHS_SDR104)) {
@@ -373,7 +378,7 @@ irqreturn_t meson_mmc_irq_thread_v3(int irq, void *dev_id)
 			xfer_bytes = mrq->data->blksz*mrq->data->blocks;
 			/* copy buffer from dma to data->sg in read cmd*/
 #ifdef SD_EMMC_REQ_DMA_SGMAP
-			WARN_ON(aml_sd_emmc_post_dma(host, mrq));
+			WARN_ON(host->post_cmd_op(host, mrq));
 #else
 			if (host->mrq->data->flags & MMC_DATA_READ) {
 				aml_sg_copy_buffer(mrq->data->sg,

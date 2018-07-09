@@ -227,7 +227,6 @@ static const struct reg_s cvbsregs_480cvbs_enc[] = {
 	{VENC_VDAC_DACSEL3,            0x0000,},
 	{VENC_VDAC_DACSEL4,            0x0000,},
 	{VENC_VDAC_DACSEL5,            0x0000,},
-	{VPU_VIU_VENC_MUX_CTRL,        0x0005,},
 	{VENC_VDAC_FIFO_CTRL,          0x2000,},
 	{ENCI_DACSEL_0,                0x0011 },
 	{ENCI_DACSEL_1,                0x11   },
@@ -278,7 +277,6 @@ static const struct reg_s cvbsregs_576cvbs_enc[] = {
 	{VENC_VDAC_DACSEL3,               0x0000,    },
 	{VENC_VDAC_DACSEL4,               0x0000,    },
 	{VENC_VDAC_DACSEL5,               0x0000,    },
-	{VPU_VIU_VENC_MUX_CTRL,           0x0005,    },
 	{VENC_VDAC_FIFO_CTRL,             0x2000,    },
 	{ENCI_DACSEL_0,                   0x0011     },
 	{ENCI_DACSEL_1,                   0x11       },
@@ -287,6 +285,7 @@ static const struct reg_s cvbsregs_576cvbs_enc[] = {
 	{VENC_VDAC_DAC0_FILT_CTRL0,       0x1        },
 	{VENC_VDAC_DAC0_FILT_CTRL1,       0xfc48     },
 	{ENCI_MACV_N0,                    0x0        },
+	{ENCI_VIDEO_CONT,                 0x0        },
 	{MREG_END_MARKER,                 0          }
 };
 

@@ -23,6 +23,11 @@
 #include "pdm_hw.h"
 #include "tdm_hw.h"
 #include "ddr_mngr.h"
+#include "resample.h"
+
+#include <linux/amlogic/media/sound/auge_utils.h>
+
+#include <linux/of_platform.h>
 
 struct snd_elem_info {
 	struct soc_enum *ee;
@@ -158,10 +163,11 @@ static int snd_int_get(struct snd_kcontrol *kcontrol,
 	val = audiobus_read(reg);
 	ucontrol->value.integer.value[0] = val;
 
-	pr_info("%s:reg:0x%x, val:0x%x\n",
-		__func__,
-		reg,
-		val);
+	/*	pr_info("%s:reg:0x%x, val:0x%x\n",
+	 *		__func__,
+	 *		reg,
+	 *		val);
+	 */
 
 	return 0;
 }
@@ -172,10 +178,11 @@ static int snd_int_set(struct snd_kcontrol *kcontrol,
 	int val  = (int)ucontrol->value.integer.value[0];
 	unsigned int reg = kcontrol->private_value;
 
-	pr_info("%s:reg:0x%x, val:0x%x\n",
-		__func__,
-		reg,
-		val);
+	/*	pr_info("%s:reg:0x%x, val:0x%x\n",
+	 *		__func__,
+	 *		reg,
+	 *		val);
+	 */
 
 	audiobus_write(reg, val);
 
@@ -215,11 +222,12 @@ static int snd_byte_get(struct snd_kcontrol *kcontrol,
 
 	ucontrol->value.integer.value[0] = val;
 
-	pr_info("%s:reg:0x%x, mask:0x%x, mask val:0x%x\n",
-		__func__,
-		einfo->reg,
-		einfo->mask,
-		val);
+	/*	pr_info("%s:reg:0x%x, mask:0x%x, mask val:0x%x\n",
+	 *		__func__,
+	 *		einfo->reg,
+	 *		einfo->mask,
+	 *		val);
+	 */
 
 	return 0;
 }
@@ -235,11 +243,12 @@ static int snd_byte_set(struct snd_kcontrol *kcontrol,
 	if (val > 255)
 		val = 255;
 
-	pr_info("%s:reg:0x%x, mask:0x%x, mask val:0x%x\n",
-		__func__,
-		einfo->reg,
-		einfo->mask,
-		val);
+	/*	pr_info("%s:reg:0x%x, mask:0x%x, mask val:0x%x\n",
+	 *		__func__,
+	 *		einfo->reg,
+	 *		einfo->mask,
+	 *		val);
+	 */
 
 	audiobus_update_bits(
 		einfo->reg,
@@ -279,16 +288,18 @@ static int snd_enum_get(struct snd_kcontrol *kcontrol,
 	int val;
 	struct snd_elem_info *einfo = (void *)kcontrol->private_value;
 
+	/* pr_info("%s:reg:0x%x, mask:0x%x",
+	 *		__func__,
+	 *		einfo->reg,
+	 *		einfo->mask);
+	 */
+
 	val = audiobus_read(einfo->reg);
 	val >>= einfo->shift;
 	val &= einfo->mask;
 	ucontrol->value.integer.value[0] = val;
 
-	pr_info("%s:reg:0x%x, mask:0x%x val:0x%x\n",
-		__func__,
-		einfo->reg,
-		einfo->mask,
-		val);
+	/* pr_info("\t val:0x%x\n", val); */
 
 	return 0;
 }
@@ -299,12 +310,12 @@ static int snd_enum_set(struct snd_kcontrol *kcontrol,
 	struct snd_elem_info *einfo = (void *)kcontrol->private_value;
 	int val  = (int)ucontrol->value.integer.value[0];
 
-	pr_info("%s:reg:0x%x, swap mask:0x%x, val:0x%x\n",
-		__func__,
-		einfo->reg,
-		einfo->mask,
-		val);
-
+	/*	pr_info("%s:reg:0x%x, swap mask:0x%x, val:0x%x\n",
+	 *		__func__,
+	 *		einfo->reg,
+	 *		einfo->mask,
+	 *		val);
+	 */
 	audiobus_update_bits(
 		einfo->reg,
 		einfo->mask << einfo->shift,
@@ -455,16 +466,19 @@ static int spdifout_channel_status;
 static int spdif_channel_status_info(struct snd_kcontrol *kcontrol,
 		struct snd_ctl_elem_info *uinfo)
 {
-	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
-	int i;
+	/* struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
+	 * int i;
+	 */
 
 	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
 	uinfo->value.integer.min = 0;
 	uinfo->value.integer.max = 0xffffffff;
 	uinfo->count = 1;
 
-	for (i = 0; i < e->items; i++)
-		pr_info("Item:%d, %s\n", i, e->texts[i]);
+	/*
+	 * for (i = 0; i < e->items; i++)
+	 *     pr_info("Item:%d, %s\n", i, e->texts[i]);
+	 */
 
 	return 0;
 }
@@ -472,20 +486,21 @@ static int spdif_channel_status_info(struct snd_kcontrol *kcontrol,
 static int spdifin_channel_status_get(struct snd_kcontrol *kcontrol,
 		struct snd_ctl_elem_value *ucontrol)
 {
-	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
+	/* struct soc_enum *e = (struct soc_enum *)kcontrol->private_value; */
 	int reg, status;
 
-	pr_info("set which channel status you wanted to get firstly\n");
+	/* pr_info("set which channel status you wanted to get firstly\n"); */
 	reg = SPDIFIN_CHSTS_REG;
 	status = spdif_get_channel_status(reg);
 
 	ucontrol->value.enumerated.item[0] = status;
 
 	/*channel status value in printk information*/
-	pr_info("%s: 0x%x\n",
-		e->texts[spdifin_channel_status],
-		status
-		);
+	/*	pr_info("%s: 0x%x\n",
+	 *		e->texts[spdifin_channel_status],
+	 *		status
+	 *		);
+	 */
 	return 0;
 }
 
@@ -509,8 +524,9 @@ static int spdifin_channel_status_set(
 	valid_bits = (chst >= 6) ? (chst - 6) : chst;
 
 	spdifin_channel_status = chst;
-	pr_info("%s\n",
-		e->texts[spdifin_channel_status]);
+	/*	pr_info("%s\n",
+	 *		e->texts[spdifin_channel_status]);
+	 */
 
 	spdifin_set_channel_status(ch, valid_bits);
 
@@ -520,21 +536,22 @@ static int spdifin_channel_status_set(
 static int spdifout_channel_status_get(struct snd_kcontrol *kcontrol,
 		struct snd_ctl_elem_value *ucontrol)
 {
-	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
+	/* struct soc_enum *e = (struct soc_enum *)kcontrol->private_value; */
 	int reg, status;
 
-	pr_info("set which channel status you wanted to get firstly\n");
+	/* pr_info("set which channel status you wanted to get firstly\n"); */
 	reg = SPDIFOUT_CHSTS_REG(spdifout_channel_status);
 	status = spdif_get_channel_status(reg);
 
 	ucontrol->value.enumerated.item[0] = status;
 
 	/*channel status value in printk information*/
-	pr_info("%s: reg:0x%x, status:0x%x\n",
-		e->texts[spdifout_channel_status],
-		reg,
-		status
-		);
+	/*	pr_info("%s: reg:0x%x, status:0x%x\n",
+	 *		e->texts[spdifout_channel_status],
+	 *		reg,
+	 *		status
+	 *		);
+	 */
 	return 0;
 }
 
@@ -555,9 +572,9 @@ static int spdifout_channel_status_set(
 	}
 
 	spdifout_channel_status = chst;
-	pr_info("%s\n",
-		e->texts[chst]);
-
+	/*	pr_info("%s\n",
+	 *		e->texts[chst]);
+	 */
 	return 0;
 }
 
@@ -582,6 +599,34 @@ static int spdifout_channel_status_set(
 	.private_value = (unsigned long)&xenum\
 }
 
+static const char *const audio_locker_texts[] = {
+	"Disable",
+	"Enable",
+};
+
+static const struct soc_enum audio_locker_enum =
+	SOC_ENUM_SINGLE(SND_SOC_NOPM, 0, ARRAY_SIZE(audio_locker_texts),
+			audio_locker_texts);
+
+static int audio_locker_get_enum(
+	struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.enumerated.item[0] = audio_locker_get();
+
+	return 0;
+}
+
+static int audio_locker_set_enum(
+	struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	int enable = ucontrol->value.enumerated.item[0];
+
+	audio_locker_set(enable);
+
+	return 0;
+}
 
 #define SND_MIX(xname, type, xenum, xshift, xmask)   \
 	SND_ENUM(xname, type, CTRL0, xenum, xshift, xmask)
@@ -878,12 +923,27 @@ static const struct snd_kcontrol_new snd_auge_controls[] = {
 	/* SPDIFIN Channel Status */
 	SPDIFOUT_CHSTATUS("SPDIFOUT Channel Status",
 				spdif_channel_status_enum),
+
+	/* audio locker */
+	SOC_ENUM_EXT("audio locker enable",
+		     audio_locker_enum,
+		     audio_locker_get_enum,
+		     audio_locker_set_enum),
 };
 
 
 int snd_card_add_kcontrols(struct snd_soc_card *card)
 {
+	int ret;
+
 	pr_info("%s card:%p\n", __func__, card);
+
+	ret = card_add_resample_kcontrols(card);
+	if (ret < 0) {
+		pr_err("Failed to add resample controls\n");
+		return ret;
+	}
+
 	return snd_soc_add_card_controls(card,
 		snd_auge_controls, ARRAY_SIZE(snd_auge_controls));
 
@@ -892,7 +952,26 @@ int snd_card_add_kcontrols(struct snd_soc_card *card)
 int loopback_parse_of(struct device_node *node,
 	struct loopback_cfg *lb_cfg)
 {
-	int ret;
+	struct platform_device *pdev;
+	const __be32 *of_slot_mask;
+	unsigned int lane_mask = 0;
+	int i, ret, set_num = 0;
+	u32 val;
+
+	pdev = of_find_device_by_node(node);
+	if (!pdev) {
+		dev_err(&pdev->dev, "failed to find platform device\n");
+		ret = -EINVAL;
+		goto fail;
+	}
+
+	/*mpll used for tdmin*/
+	lb_cfg->tdmin_mpll = devm_clk_get(&pdev->dev, "datalb_mpll");
+	if (IS_ERR(lb_cfg->tdmin_mpll)) {
+		dev_err(&pdev->dev,
+			"Can't retrieve tdmin_mpll clock\n");
+		lb_cfg->tdmin_mpll = NULL;
+	}
 
 	ret = of_property_read_u32(node, "lb_mode",
 		&lb_cfg->lb_mode);
@@ -945,7 +1024,25 @@ int loopback_parse_of(struct device_node *node,
 		ret = -EINVAL;
 		goto fail;
 	}
+	of_slot_mask = of_get_property(node, "datalb-lane-mask-in", &val);
+	if (!of_slot_mask) {
+		pr_err("if use extern loopback, pls set datalb-lane-mask-in\n");
+	} else {
+		val /= sizeof(u32);
+		for (i = 0; i < val; i++)
+			if (be32_to_cpup(&of_slot_mask[i]))
+				lane_mask |= (1 << i);
+		for (i = 0; i < 4; i++) {
+			if ((1 << i) & lane_mask) {
+				/*each lane only L/R masked*/
+				lb_cfg->datalb_chswap |=
+					(i * 2) << (set_num++ * 4);
+				lb_cfg->datalb_chswap |=
+					(i * 2 + 1) << (set_num++ * 4);
+			}
+		}
 
+	}
 	loopback_datain = lb_cfg->datain_src;
 	loopback_tdminlb = lb_cfg->datalb_src;
 
@@ -955,13 +1052,82 @@ int loopback_parse_of(struct device_node *node,
 		lb_cfg->datain_src,
 		lb_cfg->datain_chnum,
 		lb_cfg->datain_chmask);
-	pr_info("\tdatalb_src:%d, datalb_chnum:%d, datalb_chumask:%x\n",
+	pr_info("\tdatalb_src:%d, datalb_chnum:%d\n",
 		lb_cfg->datalb_src,
-		lb_cfg->datalb_chnum,
+		lb_cfg->datalb_chnum);
+	pr_info("\tdatalb_chswap:0x%x,datalb_chumask:%x\n",
+		lb_cfg->datalb_chswap,
 		lb_cfg->datalb_chmask);
 
 fail:
 	return ret;
+}
+
+int loopback_hw_params(struct snd_pcm_substream *substream,
+				      struct snd_pcm_hw_params *params,
+				      struct loopback_cfg *lb_cfg,
+				      unsigned int mclk)
+{
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	unsigned int bclk_sel, fsclk_sel;
+	int bit_depth;
+
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+		return 0;
+	bit_depth = snd_pcm_format_width(runtime->format);
+
+	if (lb_cfg->datalb_src >= 3) {
+		/*tdm in*/
+		/*for i2s mode*/
+		unsigned int sclk_div = 4 - 1;
+		unsigned int ratio = params_channels(params) * bit_depth - 1;
+		unsigned int fsclk_hi;
+		unsigned int clk_id = lb_cfg->datalb_src - 3;
+		unsigned int mul = 2;
+		unsigned int mpll_freq, offset, reg;
+
+		/*lrclk sclk depend on default 8ch setting,*/
+		/* so if num of channels is 4, to change ratio*/
+		if (params_channels(params) == 4)
+			ratio = ratio*2;
+
+		fsclk_hi = ratio/2;
+
+		pr_info("%s, channels:%d, format:%d, ratio:%d\n",
+				__func__,
+				params_channels(params),
+				bit_depth,
+				ratio);
+
+		bclk_sel = clk_id;
+		fsclk_sel = clk_id;
+
+		/*mclk*/
+		mpll_freq = mclk * mul;
+		clk_set_rate(lb_cfg->tdmin_mpll, mpll_freq);
+		pr_info("mpll freq:%d, %lu\n", mpll_freq,
+			clk_get_rate(lb_cfg->tdmin_mpll));
+		offset = EE_AUDIO_MCLK_B_CTRL - EE_AUDIO_MCLK_A_CTRL;
+		reg = EE_AUDIO_MCLK_A_CTRL + offset * clk_id;
+		audiobus_write(reg,
+				1 << 31 | /*clk enable*/
+				clk_id << 24 | /*clk src*/
+				(mul - 1)); /*clk_div mclk*/
+
+		/*sclk, lrclk*/
+		offset = EE_AUDIO_MST_B_SCLK_CTRL0 - EE_AUDIO_MST_A_SCLK_CTRL0;
+		reg = EE_AUDIO_MST_A_SCLK_CTRL0 + offset * clk_id;
+		audiobus_update_bits(reg,
+				0x3 << 30 | 0x3ff << 20 | 0x3ff<<10 | 0x3ff,
+				0x3 << 30 | sclk_div << 20 | fsclk_hi << 10
+				| ratio);
+
+		audiobus_update_bits(
+			EE_AUDIO_CLK_TDMIN_LB_CTRL,
+			0x3 << 30 | 1 << 29 | 0xf << 24 | 0xf << 20,
+			0x3 << 30 | 1 << 29 | bclk_sel << 24 | fsclk_sel << 20);
+	}
+	return 0;
 }
 
 int loopback_prepare(
@@ -1052,7 +1218,7 @@ int loopback_prepare(
 	datain_config(&datain);
 	datalb_config(&datalb);
 
-	datalb_ctrl(lb_cfg->datalb_src);
+	datalb_ctrl(lb_cfg);
 	lb_mode(lb_cfg->lb_mode);
 
 	return 0;
@@ -1081,6 +1247,7 @@ void frddr_enable(int is_enable, int frddr_index)
 }
 
 static void loopback_modules_disable(
+	struct loopback_cfg *lb_cfg,
 	int tdm_index,
 	int frddr_index, int toddr_index)
 {
@@ -1088,9 +1255,24 @@ static void loopback_modules_disable(
 	tdmin_lb_fifo_enable(0);
 	tdmin_lb_enable(tdm_index, 0);
 
-	/* pdmin */
-	pdm_enable(0);
-
+	/* datain src */
+	switch (lb_cfg->datain_src) {
+	case 0:
+	case 1:
+	case 2:
+		/*tdm in*/
+		break;
+	case 3:
+		/*spdif in*/
+		break;
+	case 4:
+		/*pdm in*/
+		pdm_enable(0);
+		break;
+	default:
+		pr_err("unsupport datain source!!\n");
+		return;
+	}
 	/* loopback */
 	lb_enable(0);
 
@@ -1112,6 +1294,7 @@ static void loopback_modules_disable(
 }
 
 static void loopback_modules_enable(
+	struct loopback_cfg *lb_cfg,
 	int tdm_index,
 	int frddr_index, int toddr_index)
 {
@@ -1132,6 +1315,9 @@ static void loopback_modules_enable(
 	else if (frddr_index >= 0)
 		frddr_enable(1, frddr_index);
 
+	tdm_fifo_enable(tdm_index, 1);
+	tdm_enable(tdm_index, 1);
+	 frddr_enable(1, frddr_index);
 	/* toddr */
 	if (toddr_index >= 0)
 		toddr_enable(1, toddr_index);
@@ -1139,9 +1325,24 @@ static void loopback_modules_enable(
 	/* loopback */
 	lb_enable(1);
 
-	/* pdmin */
-	pdm_enable(1);
-
+	/* datain src */
+	switch (lb_cfg->datain_src) {
+	case 0:
+	case 1:
+	case 2:
+		/*tdm in*/
+		break;
+	case 3:
+		/*spdif in*/
+		break;
+	case 4:
+		/*pdm in*/
+		pdm_enable(1);
+		break;
+	default:
+		pr_err("unsupport datain source!!\n");
+		return;
+	}
 	/*tdminLB*/
 	tdmin_lb_fifo_enable(1);
 	tdmin_lb_enable(tdm_index, 1);
@@ -1182,11 +1383,13 @@ int loopback_trigger(
 			/*if pdm overrun, re-set up the sequence*/
 			if (lb_cfg->frddr_index >= 0)
 				loopback_modules_disable(
+					lb_cfg,
 					lb_cfg->datalb_src,
 					lb_cfg->frddr_index,
 					lb_cfg->toddr_index);
 
 			loopback_modules_enable(
+					lb_cfg,
 					lb_cfg->datalb_src,
 					lb_cfg->frddr_index,
 					lb_cfg->toddr_index);
@@ -1225,4 +1428,22 @@ int loopback_check_enable(int src)
 	return (src <= PDMIN)
 		&& (loopback_datain == src)
 		&& (loopback_enable == 1);
+}
+
+void auge_acodec_reset(void)
+{
+	audioreset_update_bits(EE_RESET1, 1 << 29, 1 << 29);
+}
+
+void auge_toacodec_ctrl(int tdmout_id)
+{
+	// TODO: check skew for g12a
+	audiobus_write(EE_AUDIO_TOACODEC_CTRL0,
+		1 << 31
+		| ((tdmout_id << 2)) << 12 /* data 0*/
+		| tdmout_id << 8 /* lrclk */
+		| 1 << 7         /* Bclk_cap_inv*/
+		| tdmout_id << 4 /* bclk */
+		| tdmout_id << 0 /* mclk */
+		);
 }

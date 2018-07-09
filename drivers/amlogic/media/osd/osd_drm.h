@@ -17,7 +17,7 @@
 
 #ifndef _OSD_DRM_H_
 #define _OSD_DRM_H_
-
+#include "osd.h"
 struct osd_plane_map_s {
 	u32 plane_index;
 	u32 zorder;
@@ -33,10 +33,15 @@ struct osd_plane_map_s {
 	u32 dst_w;
 	u32 dst_h;
 	int byte_stride;
+	u32 background_w;
+	u32 background_h;
+	u32 premult_en;
+	u32 afbc_en;
+	u32 afbc_inter_format;
 	u32 reserve;
 };
 
-int osd_drm_init(void);
+int osd_drm_init(struct osd_device_data_s *osd_meson_dev);
 void osd_drm_debugfs_add(
 	struct dentry **plane_debugfs_dir,
 	char *name,
