@@ -13494,6 +13494,10 @@ AMLOGIC driver for thermal
 M: Tao Zeng <tao.zeng@amlogic.com>
 F: drivers/amlogic/thermal/*
 
+M: Tao Zeng <tao.zeng@amlogic.com>
+F: drivers/amlogic/ddr_tool/*
+F: drivers/amlogic/ddr_tool/ddr_band_port_desc.c
+
 AMLOGIC driver for cpufreq
 M: Tao Zeng <tao.zeng@amlogic.com>
 F: drivers/amlogic/cpufreq/*
@@ -14014,12 +14018,6 @@ AMLOGIC AXG ADD CLKMSR INTERFACE
 M:	wang xing <xing.wang@amlogic.com>
 F:	include/linux/amlogic/clk_measure.h
 
-AMLOGIC AXG ADD DDR WINDOW DRIVER
-M:	jiaxing.ye <jiaxing.ye@amlogic.com>
-F:	driver/amlogic/ddr_window/Makefile
-F:	driver/amlogic/ddr_window/ddr_window.c
-F:	driver/amlogic/ddr_window/Kconfig
-
 AMLOGIC AUDIO INFO
 M:	wang xing <xing.wang@amlogic.com>
 F: drivers/amlogic/audioinfo/
@@ -14139,6 +14137,11 @@ F: driver/amlogic/drm/am_meson_fbdev.c
 F: include/linux/amlogic/meson_drm.h
 F: arch/arm64/boot/dts/amlogic/g12a_skt_buildroot.dts
 F: arch/arm64/boot/dts/amlogic/mesong12a_drm.dtsi
+F: arch/arm64/boot/dts/amlogic/g12a_s905d2_u200_drm_buildroot.dts
+F: driver/amlogic/drm/am_meson_drv.c
+F: driver/amlogic/drm/am_meson_drv.h
+F: driver/amlogic/drm/am_meson_vpu.c
+F: driver/amlogic/drm/am_meson_vpu.h
 
 AMLOGIC ADD S400EMMC DTS
 M: Yue Gui <yuegui.he@amlogic.com>
@@ -14407,3 +14410,11 @@ AMLOGIC ADD LCD_EXTERN TL050FHV02CT DRIVER
 M:	Weiming Liu <weiming.liu@amlogic.com>
 F:	drivers/amlogic/media/vout/lcd/lcd_extern/mipi_TL050FHV02CT.c
 
+AMLOGIC ATV DEMOD DRIVER
+M:      nengwen.chen <nengwen.chen@amlogic.com>
+F:      drivers/amlogic/atv_demod/*
+F:      include/linux/amlogic/aml_atvdemod.h
+
+AMLOGIC G12A X2 U211 buildroot dts
+M:     wenbiao zhang <wenbiao.zhang@amlogic.com>
+F:     arch/arm64/boot/dts/amlogic/g12a_s905y2_u221_buildroot.dts

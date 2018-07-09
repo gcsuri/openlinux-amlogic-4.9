@@ -843,25 +843,11 @@ bool is_clk_stable(void)
 unsigned int hdmirx_audio_fifo_rst(void)
 {
 	int error = 0;
-	static bool rst_flag;
 
-	/* for some special devices which send many unvalid subpackets
-	 * in low sample rate audio pattern(e.g 32K), if we only store
-	 * subpackets with sample_present.spX=1, afifo will always
-	 * underflow. In this case, config afifo to store all subpackets
-	 * regardless of sample_present.spX
-	 */
-	if (rst_flag) {
-		hdmirx_wr_dwc(DWC_AUD_FIFO_CTRL, AFIF_SUBPACKETS | AFIF_INIT);
-		udelay(20);
-		hdmirx_wr_dwc(DWC_AUD_FIFO_CTRL, AFIF_SUBPACKETS);
-	} else {
-		hdmirx_wr_dwc(DWC_AUD_FIFO_CTRL, AFIF_INIT);
-		udelay(20);
-		hdmirx_wr_dwc(DWC_AUD_FIFO_CTRL, 0);
-	}
+	hdmirx_wr_bits_dwc(DWC_AUD_FIFO_CTRL, AFIF_INIT, 1);
+	udelay(20);
+	hdmirx_wr_bits_dwc(DWC_AUD_FIFO_CTRL, AFIF_INIT, 0);
 	hdmirx_wr_dwc(DWC_DMI_SW_RST, 0x10);
-	rst_flag = !rst_flag;
 	if (log_level & AUDIO_LOG)
 		rx_pr("%s\n", __func__);
 	return error;
@@ -1215,10 +1201,27 @@ void rx_esm_tmdsclk_en(bool en)
  */
 void hdcp22_clk_en(bool en)
 {
-	if (en)
+	if (en) {
+		wr_reg_hhi(HHI_HDCP22_CLK_CNTL,
+			(rd_reg_hhi(HHI_HDCP22_CLK_CNTL) & 0xffff0000) |
+			 /* [10: 9] fclk_div7=2000/7=285.71 MHz */
+			((0 << 9)   |
+			 /* [    8] clk_en. Enable gated clock */
+			 (1 << 8)   |
+			 /* [ 6: 0] Divide by 1. = 285.71/1 = 285.71 MHz */
+			 (0 << 0)));
+
+			wr_reg_hhi(HHI_HDCP22_CLK_CNTL,
+			(rd_reg_hhi(HHI_HDCP22_CLK_CNTL) & 0x0000ffff) |
+			/* [26:25] select cts_oscin_clk=24 MHz */
+			((0 << 25)  |
+			 (1 << 24)  |   /* [   24] Enable gated clock */
+			 (0 << 16)));
 		hdmirx_wr_bits_top(TOP_CLK_CNTL, MSK(3, 3), 0x7);
-	else
+	} else {
 		hdmirx_wr_bits_top(TOP_CLK_CNTL, MSK(3, 3), 0x0);
+		wr_reg_hhi(HHI_HDCP22_CLK_CNTL, 0);
+	}
 }
 
 /*
@@ -1269,7 +1272,6 @@ void hdmirx_hdcp22_hpd(bool value)
  */
 void hdcp22_suspend(void)
 {
-	wr_reg_hhi(HHI_HDCP22_CLK_CNTL, 0);
 	hdcp22_clk_en(0);
 	/* note: can't pull down hpd before enter suspend */
 	/* it will stop cec wake up func if EE domain still working */

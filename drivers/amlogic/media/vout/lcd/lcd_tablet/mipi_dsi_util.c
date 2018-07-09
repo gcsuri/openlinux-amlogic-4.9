@@ -113,7 +113,7 @@ static void mipi_dsi_init_table_print(struct dsi_config_s *dconf, int on_off)
 	i = 0;
 	n = 0;
 	while (i < n_max) {
-		if (dsi_table[i] == 0xff) {
+		if (dsi_table[i] == 0xff) { /* ctrl flag */
 			n = 2;
 			if (dsi_table[i+1] == 0xff) {
 				pr_info("  0x%02x,0x%02x,\n",
@@ -123,17 +123,36 @@ static void mipi_dsi_init_table_print(struct dsi_config_s *dconf, int on_off)
 				pr_info("  0x%02x,%d,\n",
 					dsi_table[i], dsi_table[i+1]);
 			}
-		} else if (dsi_table[i] == 0xf0) {
+		} else if (dsi_table[i] == 0xf0) { /* gpio */
 			n = (DSI_CMD_SIZE_INDEX + 1) +
 				dsi_table[i+DSI_CMD_SIZE_INDEX];
-			pr_info("  ");
+			len = 0;
 			for (j = 0; j < n; j++) {
-				if (j == 0)
-					pr_info("0x%02x,", dsi_table[i+j]);
-				else
-					pr_info("%d,", dsi_table[i+j]);
+				if (j == 0) {
+					len += sprintf(str+len, "0x%02x,",
+						dsi_table[i+j]);
+				} else {
+					len += sprintf(str+len, "%d,",
+						dsi_table[i+j]);
+				}
 			}
-			pr_info("\n");
+			if (len > 0)
+				pr_info("  %s\n", str);
+		} else if (dsi_table[i] == 0xfc) { /* check state */
+			n = (DSI_CMD_SIZE_INDEX + 1) +
+				dsi_table[i+DSI_CMD_SIZE_INDEX];
+			len = 0;
+			for (j = 0; j < n; j++) {
+				if (j == DSI_CMD_SIZE_INDEX) {
+					len += sprintf(str+len, "%d,",
+						dsi_table[i+j]);
+				} else {
+					len += sprintf(str+len, "0x%02x,",
+						dsi_table[i+j]);
+				}
+			}
+			if (len > 0)
+				pr_info("  %s\n", str);
 		} else if ((dsi_table[i] & 0xf) == 0x0) {
 			pr_info("dsi_init_%s wrong data_type: 0x%02x\n",
 				on_off ? "on" : "off", dsi_table[i]);
@@ -339,7 +358,21 @@ int lcd_mipi_dsi_init_table_detect(struct device_node *m_node,
 				break;
 			}
 			i = i + (DSI_CMD_SIZE_INDEX + 1) + (val & 0xff);
-			i += 4;
+		} else if (val == 0xfc) { /* check state */
+			ret = of_property_read_u32_index(m_node,
+				propname, (i + DSI_CMD_SIZE_INDEX), &val);
+			if (val > n_max)
+				break;
+
+			ret = of_property_read_u32_index(m_node, propname,
+				(i + DSI_CMD_SIZE_INDEX + 1), &para[0]);
+			ret = of_property_read_u32_index(m_node, propname,
+				(i + DSI_CMD_SIZE_INDEX + 2), &para[1]);
+			dconf->check_reg = para[0];
+			dconf->check_cnt = para[1];
+			if (dconf->check_cnt > 0)
+				dconf->check_en = 1;
+			i = i + (DSI_CMD_SIZE_INDEX + 1) + (val & 0xff);
 		} else if ((val & 0xf) == 0x0) {
 			LCDERR("get %s wrong data_type: 0x%02x\n",
 				propname, val);
@@ -415,7 +448,7 @@ static void mipi_dcs_set(int trans_type, int req_ack, int tear_en)
 	dsi_host_write(MIPI_DSI_DWC_PCKHDL_CFG_OS,
 		(1 << BIT_CRC_RX_EN)  |
 		(1 << BIT_ECC_RX_EN)  |
-		(0 << BIT_BTA_EN)     |
+		(req_ack << BIT_BTA_EN)     |
 		(0 << BIT_EOTP_RX_EN) |
 		(0 << BIT_EOTP_TX_EN));
 }
@@ -1179,139 +1212,6 @@ static void dsi_write_long_packet(struct dsi_cmd_request_s *req)
 		wait_cmd_fifo_empty();
 }
 
-/* *************************************************************
- * Function: dsi_write_cmd
- * Supported Data Type: DT_GEN_SHORT_WR_0, DT_GEN_SHORT_WR_1, DT_GEN_SHORT_WR_2,
- *			DT_DCS_SHORT_WR_0, DT_DCS_SHORT_WR_1,
- *			DT_GEN_LONG_WR, DT_DCS_LONG_WR,
- *			DT_SET_MAX_RET_PKT_SIZE
- *			DT_GEN_RD_0, DT_GEN_RD_1, DT_GEN_RD_2,
- *			DT_DCS_RD_0
- * Return:              command number
- */
-int dsi_write_cmd(unsigned char *payload)
-{
-	int i = 0, j = 0, num = 0;
-#ifdef DSI_CMD_READ_VALID
-	int k = 0, n = 0;
-	unsigned char rd_data[100];
-#endif
-	struct dsi_cmd_request_s dsi_cmd_req;
-	unsigned char vc_id = MIPI_DSI_VIRTUAL_CHAN_ID;
-	unsigned int req_ack = MIPI_DSI_DCS_ACK_TYPE;
-
-	/* mipi command(payload) */
-	/* format:  data_type, cmd_size, data.... */
-	/* special: data_type=0xff,
-	 *		cmd_size<0xff means delay ms,
-	 *		cmd_size=0xff means ending.
-	 *	    data_type=0xf0,
-	 *		data0=gpio_index, data1=gpio_value, data2=delay.
-	 */
-	while (i < DSI_CMD_SIZE_MAX) {
-		if (payload[i] == 0xff) {
-			j = 2;
-			if (payload[i+1] == 0xff)
-				break;
-			else
-				mdelay(payload[i+1]);
-		} else if (payload[i] == 0xf0) {
-			j = (DSI_CMD_SIZE_INDEX + 1) +
-				payload[i+DSI_CMD_SIZE_INDEX];
-			if (payload[i+DSI_CMD_SIZE_INDEX] < 3) {
-				LCDERR("wrong cmd_size %d for gpio\n",
-					payload[i+DSI_CMD_SIZE_INDEX]);
-				break;
-			}
-			lcd_cpu_gpio_set(payload[i+DSI_GPIO_INDEX],
-				payload[i+DSI_GPIO_INDEX+1]);
-			if (payload[i+DSI_GPIO_INDEX+2])
-			mdelay(payload[i+DSI_GPIO_INDEX+2]);
-		} else if ((payload[i] & 0xf) == 0x0) {
-				LCDERR("data_type: 0x%02x\n", payload[i]);
-				break;
-		} else {
-			/* payload[i+DSI_CMD_SIZE_INDEX] is data count */
-			j = (DSI_CMD_SIZE_INDEX + 1) +
-				payload[i+DSI_CMD_SIZE_INDEX];
-			dsi_cmd_req.data_type = payload[i];
-			dsi_cmd_req.vc_id = (vc_id & 0x3);
-			dsi_cmd_req.payload = &payload[i];
-			dsi_cmd_req.pld_count = payload[i+DSI_CMD_SIZE_INDEX];
-			dsi_cmd_req.req_ack = req_ack;
-			switch (dsi_cmd_req.data_type) {/* analysis data_type */
-			case DT_GEN_SHORT_WR_0:
-			case DT_GEN_SHORT_WR_1:
-			case DT_GEN_SHORT_WR_2:
-				dsi_generic_write_short_packet(&dsi_cmd_req);
-				break;
-			case DT_DCS_SHORT_WR_0:
-			case DT_DCS_SHORT_WR_1:
-				dsi_dcs_write_short_packet(&dsi_cmd_req);
-				break;
-			case DT_DCS_LONG_WR:
-			case DT_GEN_LONG_WR:
-				dsi_write_long_packet(&dsi_cmd_req);
-				break;
-			case DT_TURN_ON:
-				dsi_host_setb(MIPI_DSI_TOP_CNTL, 1, 2, 1);
-				mdelay(20); /* wait for vsync trigger */
-				dsi_host_setb(MIPI_DSI_TOP_CNTL, 0, 2, 1);
-				mdelay(20); /* wait for vsync trigger */
-				break;
-			case DT_SHUT_DOWN:
-				dsi_host_setb(MIPI_DSI_TOP_CNTL, 1, 2, 1);
-				mdelay(20); /* wait for vsync trigger */
-				break;
-			case DT_SET_MAX_RET_PKT_SIZE:
-				dsi_set_max_return_pkt_size(&dsi_cmd_req);
-				break;
-#ifdef DSI_CMD_READ_VALID
-			case DT_GEN_RD_0:
-			case DT_GEN_RD_1:
-			case DT_GEN_RD_2:
-				/* need BTA ack */
-				dsi_cmd_req.req_ack = MIPI_DSI_DCS_REQ_ACK;
-				dsi_cmd_req.pld_count =
-					(dsi_cmd_req.pld_count > 2) ?
-					2 : dsi_cmd_req.pld_count;
-				n = dsi_generic_read_packet(&dsi_cmd_req,
-						&rd_data[0]);
-				LCDPR("generic read data");
-				for (k = 0; k < dsi_cmd_req.pld_count; k++) {
-					pr_info(" 0x%02x",
-						dsi_cmd_req.payload[k+2]);
-				}
-				for (k = 0; k < n; k++)
-					pr_info("0x%02x ", rd_data[k]);
-				pr_info("\n");
-				break;
-			case DT_DCS_RD_0:
-				/* need BTA ack */
-				dsi_cmd_req.req_ack = MIPI_DSI_DCS_REQ_ACK;
-				n = dsi_dcs_read_packet(&dsi_cmd_req,
-					&rd_data[0]);
-				pr_info("dcs read data 0x%02x:\n",
-					dsi_cmd_req.payload[2]);
-				for (k = 0; k < n; k++)
-					pr_info("0x%02x ", rd_data[k]);
-				pr_info("\n");
-				break;
-#endif
-			default:
-				LCDPR("[warning]un-support data_type: 0x%02x\n",
-					dsi_cmd_req.data_type);
-
-				break;
-			}
-		}
-		i += j;
-		num++;
-	}
-
-	return num;
-}
-
 #ifdef DSI_CMD_READ_VALID
 /* *************************************************************
  * Function: dsi_read_single
@@ -1377,9 +1277,210 @@ int dsi_read_single(unsigned char *payload, unsigned char *rd_data,
 }
 #endif
 
+static void mipi_dsi_check_state(unsigned char reg, int cnt)
+{
+	int ret = 0, i, len;
+	unsigned char *rd_data;
+	unsigned char payload[3] = {DT_GEN_RD_1, 1, 0x04};
+	char str[100];
+	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
+
+	if (lcd_drv->lcd_config->lcd_control.mipi_config->check_en == 0)
+		return;
+	LCDPR("%s\n", __func__);
+
+	rd_data = kmalloc_array(cnt, sizeof(unsigned char), GFP_KERNEL);
+	if (rd_data == NULL) {
+		LCDERR("%s: rd_data error\n", __func__);
+		return;
+	}
+
+	payload[2] = reg;
+	ret = dsi_read_single(payload, rd_data, cnt);
+	if (ret < 0) {
+		lcd_drv->lcd_config->lcd_control.mipi_config->check_state = 0;
+		lcd_vcbus_setb(L_VCOM_VS_ADDR, 0, 12, 1);
+		kfree(rd_data);
+		return;
+	}
+	if (ret > cnt) {
+		LCDERR("%s: read back cnt is wrong\n", __func__);
+		kfree(rd_data);
+		return;
+	}
+
+	lcd_drv->lcd_config->lcd_control.mipi_config->check_state = 1;
+	lcd_vcbus_setb(L_VCOM_VS_ADDR, 1, 12, 1);
+	len = sprintf(str, "read reg 0x%02x: ", reg);
+	for (i = 0; i < ret; i++) {
+		if (i == 0)
+			len += sprintf(str+len, "0x%02x", rd_data[i]);
+		else
+			len += sprintf(str+len, ",0x%02x", rd_data[i]);
+	}
+	pr_info("%s\n", str);
+
+	kfree(rd_data);
+}
+
+/* *************************************************************
+ * Function: dsi_write_cmd
+ * Supported Data Type: DT_GEN_SHORT_WR_0, DT_GEN_SHORT_WR_1, DT_GEN_SHORT_WR_2,
+ *			DT_DCS_SHORT_WR_0, DT_DCS_SHORT_WR_1,
+ *			DT_GEN_LONG_WR, DT_DCS_LONG_WR,
+ *			DT_SET_MAX_RET_PKT_SIZE
+ *			DT_GEN_RD_0, DT_GEN_RD_1, DT_GEN_RD_2,
+ *			DT_DCS_RD_0
+ * Return:              command number
+ */
+int dsi_write_cmd(unsigned char *payload)
+{
+	int i = 0, j = 0, num = 0;
+#ifdef DSI_CMD_READ_VALID
+	int k = 0, n = 0;
+	unsigned char rd_data[100];
+	unsigned char str[200];
+	int len;
+#endif
+	struct dsi_cmd_request_s dsi_cmd_req;
+	unsigned char vc_id = MIPI_DSI_VIRTUAL_CHAN_ID;
+	unsigned int req_ack = MIPI_DSI_DCS_ACK_TYPE;
+
+	/* mipi command(payload) */
+	/* format:  data_type, cmd_size, data.... */
+	/* special: data_type=0xff,
+	 *		cmd_size<0xff means delay ms,
+	 *		cmd_size=0xff means ending.
+	 *	    data_type=0xf0,
+	 *		data0=gpio_index, data1=gpio_value, data2=delay.
+	 */
+	while (i < DSI_CMD_SIZE_MAX) {
+		if (payload[i] == 0xff) {
+			j = 2;
+			if (payload[i+1] == 0xff)
+				break;
+			else
+				mdelay(payload[i+1]);
+		} else if (payload[i] == 0xf0) { /* gpio */
+			j = (DSI_CMD_SIZE_INDEX + 1) +
+				payload[i+DSI_CMD_SIZE_INDEX];
+			if (payload[i+DSI_CMD_SIZE_INDEX] < 3) {
+				LCDERR("wrong cmd_size %d for gpio\n",
+					payload[i+DSI_CMD_SIZE_INDEX]);
+				break;
+			}
+			lcd_cpu_gpio_set(payload[i+DSI_GPIO_INDEX],
+				payload[i+DSI_GPIO_INDEX+1]);
+			if (payload[i+DSI_GPIO_INDEX+2])
+			mdelay(payload[i+DSI_GPIO_INDEX+2]);
+		} else if (payload[i] == 0xfc) { /* check state */
+			j = (DSI_CMD_SIZE_INDEX + 1) +
+				payload[i+DSI_CMD_SIZE_INDEX];
+			if (payload[i+DSI_CMD_SIZE_INDEX] < 2) {
+				LCDERR("wrong cmd_size %d for check state\n",
+					payload[i+DSI_CMD_SIZE_INDEX]);
+				break;
+			}
+			if (payload[i+DSI_GPIO_INDEX+2] > 0) {
+				mipi_dsi_check_state(
+					payload[i+DSI_GPIO_INDEX],
+					payload[i+DSI_GPIO_INDEX+1]);
+			}
+		} else if ((payload[i] & 0xf) == 0x0) {
+				LCDERR("data_type: 0x%02x\n", payload[i]);
+				break;
+		} else {
+			/* payload[i+DSI_CMD_SIZE_INDEX] is data count */
+			j = (DSI_CMD_SIZE_INDEX + 1) +
+				payload[i+DSI_CMD_SIZE_INDEX];
+			dsi_cmd_req.data_type = payload[i];
+			dsi_cmd_req.vc_id = (vc_id & 0x3);
+			dsi_cmd_req.payload = &payload[i];
+			dsi_cmd_req.pld_count = payload[i+DSI_CMD_SIZE_INDEX];
+			dsi_cmd_req.req_ack = req_ack;
+			switch (dsi_cmd_req.data_type) {/* analysis data_type */
+			case DT_GEN_SHORT_WR_0:
+			case DT_GEN_SHORT_WR_1:
+			case DT_GEN_SHORT_WR_2:
+				dsi_generic_write_short_packet(&dsi_cmd_req);
+				break;
+			case DT_DCS_SHORT_WR_0:
+			case DT_DCS_SHORT_WR_1:
+				dsi_dcs_write_short_packet(&dsi_cmd_req);
+				break;
+			case DT_DCS_LONG_WR:
+			case DT_GEN_LONG_WR:
+				dsi_write_long_packet(&dsi_cmd_req);
+				break;
+			case DT_TURN_ON:
+				dsi_host_setb(MIPI_DSI_TOP_CNTL, 1, 2, 1);
+				mdelay(20); /* wait for vsync trigger */
+				dsi_host_setb(MIPI_DSI_TOP_CNTL, 0, 2, 1);
+				mdelay(20); /* wait for vsync trigger */
+				break;
+			case DT_SHUT_DOWN:
+				dsi_host_setb(MIPI_DSI_TOP_CNTL, 1, 2, 1);
+				mdelay(20); /* wait for vsync trigger */
+				break;
+			case DT_SET_MAX_RET_PKT_SIZE:
+				dsi_set_max_return_pkt_size(&dsi_cmd_req);
+				break;
+#ifdef DSI_CMD_READ_VALID
+			case DT_GEN_RD_0:
+			case DT_GEN_RD_1:
+			case DT_GEN_RD_2:
+				/* need BTA ack */
+				dsi_cmd_req.req_ack = MIPI_DSI_DCS_REQ_ACK;
+				dsi_cmd_req.pld_count =
+					(dsi_cmd_req.pld_count > 2) ?
+					2 : dsi_cmd_req.pld_count;
+				n = dsi_generic_read_packet(&dsi_cmd_req,
+						&rd_data[0]);
+				len = 0;
+				for (k = 0; k < dsi_cmd_req.pld_count; k++) {
+					len += sprintf(str+len, " 0x%02x",
+						dsi_cmd_req.payload[k+2]);
+				}
+				pr_info("generic read data%s:\n", str);
+				len = 0;
+				for (k = 0; k < n; k++) {
+					len += sprintf(str+len, "0x%02x ",
+						rd_data[k]);
+				}
+				pr_info("  %s\n", str);
+				break;
+			case DT_DCS_RD_0:
+				/* need BTA ack */
+				dsi_cmd_req.req_ack = MIPI_DSI_DCS_REQ_ACK;
+				n = dsi_dcs_read_packet(&dsi_cmd_req,
+					&rd_data[0]);
+				pr_info("dcs read data 0x%02x:\n",
+					dsi_cmd_req.payload[2]);
+				len = 0;
+				for (k = 0; k < n; k++) {
+					len += sprintf(str+len, "0x%02x ",
+						rd_data[k]);
+				}
+				pr_info("  %s\n", str);
+				break;
+#endif
+			default:
+				LCDPR("[warning]un-support data_type: 0x%02x\n",
+					dsi_cmd_req.data_type);
+
+				break;
+			}
+		}
+		i += j;
+		num++;
+	}
+
+	return num;
+}
+
 static void mipi_dsi_phy_config(struct dsi_phy_s *dphy, unsigned int dsi_ui)
 {
-	unsigned int temp, t_ui, t_req;
+	unsigned int temp, t_ui, t_req_min, t_req_max, t_req, n;
 
 	t_ui = (1000000 * 100) / (dsi_ui / 1000); /* 0.01ns*100 */
 	temp = t_ui * 8; /* lane_byte cycle time */
@@ -1392,19 +1493,89 @@ static void mipi_dsi_phy_config(struct dsi_phy_s *dphy, unsigned int dsi_ui)
 	dphy->lp_ta_get = ((DPHY_TIME_LP_TA_GETX(t_ui) + temp - 1) / temp) &
 			0xff;
 	dphy->hs_exit = ((DPHY_TIME_HS_EXIT(t_ui) + temp - 1) / temp) & 0xff;
-	dphy->hs_trail = ((DPHY_TIME_HS_TRAIL(t_ui) + temp - 1) / temp) & 0xff;
-	dphy->hs_prepare = ((DPHY_TIME_HS_PREPARE(t_ui) + temp - 1) / temp) &
-			0xff;
-	dphy->hs_zero = ((DPHY_TIME_HS_ZERO(t_ui) + temp - 1) / temp) & 0xff;
-	dphy->clk_trail = ((DPHY_TIME_CLK_TRAIL(t_ui) + temp - 1) / temp) &
-			0xff;
-	dphy->clk_post = ((DPHY_TIME_CLK_POST(t_ui) + temp - 1) / temp) & 0xff;
 	dphy->clk_prepare = ((DPHY_TIME_CLK_PREPARE(t_ui) + temp - 1) / temp) &
 			0xff;
 	dphy->clk_zero = ((DPHY_TIME_CLK_ZERO(t_ui) + temp - 1) / temp) & 0xff;
 	dphy->clk_pre = ((DPHY_TIME_CLK_PRE(t_ui) + temp - 1) / temp) & 0xff;
 	dphy->init = (DPHY_TIME_INIT(t_ui) + temp - 1) / temp;
 	dphy->wakeup = (DPHY_TIME_WAKEUP(t_ui) + temp - 1) / temp;
+
+	t_req_max = ((105 * 100 + 12 * t_ui) / 100);
+	for (n = 0; n <= 0xff; n++) {
+		dsi_phy_config.clk_trail = n;
+		if (((temp * dsi_phy_config.clk_trail / 100) > 70) &&
+			((temp * dsi_phy_config.clk_trail / 100) < t_req_max)) {
+			if (lcd_debug_print_flag) {
+				LCDPR("t_ui=%d, t_req_max=%d\n",
+					t_ui, t_req_max);
+				LCDPR("clk_trail=%d, n=%d\n",
+					dsi_phy_config.clk_trail, n);
+			}
+			break;
+		}
+	}
+
+	t_req_min = 2 * ((60 * 100 + 52 * t_ui) / 100);
+	for (n = 0; n <= 0xff; n++) {
+		dsi_phy_config.clk_post = n;
+		if ((temp * dsi_phy_config.clk_post / 100) >= t_req_min) {
+			if (lcd_debug_print_flag) {
+				LCDPR("t_ui=%d, t_req_min=%d\n",
+					t_ui, t_req_min);
+				LCDPR("clk_post=%d, n=%d\n",
+					dsi_phy_config.clk_post, n);
+			}
+			break;
+		}
+	}
+
+	t_req_min = max(8 * t_ui / 100, (60 * 100 + 4 * t_ui) / 100) + 10;
+	t_req_max = ((105 * 100 + 12 * t_ui) / 100);
+	for (n = 0; n <= 0xff; n++) {
+		dsi_phy_config.hs_trail = n;
+		if (((temp * dsi_phy_config.hs_trail / 100) > t_req_min) &&
+			((temp * dsi_phy_config.hs_trail / 100) < t_req_max)) {
+			if (lcd_debug_print_flag) {
+				LCDPR("t_ui=%d, t_req_min=%d, t_req_max=%d\n",
+					t_ui, t_req_min, t_req_max);
+				LCDPR("hs_trail=%d, n=%d\n",
+					dsi_phy_config.hs_trail, n);
+			}
+			break;
+		}
+	}
+
+	t_req_min = (40 * 100 + 4 * t_ui) / 100;
+	t_req_max = ((85 * 100 + 6 * t_ui) / 100);
+	for (n = 0; n <= 0xff; n++) {
+		dsi_phy_config.hs_prepare = n;
+		if (((temp * dsi_phy_config.hs_prepare / 100) > t_req_min) &&
+			((temp * dsi_phy_config.hs_prepare / 100) <
+			t_req_max)) {
+			if (lcd_debug_print_flag) {
+				LCDPR("t_ui=%d, t_req_min=%d, t_req_max=%d\n",
+					t_ui, t_req_min, t_req_max);
+				LCDPR("hs_prepare=%d, n=%d\n",
+					dsi_phy_config.hs_prepare, n);
+			}
+			break;
+		}
+	}
+
+	t_req_min = ((145 * 100 + 10 * t_ui) / 100) -
+		((40 * 100 + 4 * t_ui) / 100);
+	for (n = 0; n <= 0xff; n++) {
+		dsi_phy_config.hs_zero = n;
+		if ((temp * dsi_phy_config.hs_zero / 100) > t_req_min) {
+			if (lcd_debug_print_flag) {
+				LCDPR("t_ui=%d, t_req_min=%d\n",
+					t_ui, t_req_min);
+				LCDPR("hs_zero=%d, n=%d\n",
+					dsi_phy_config.hs_zero, n);
+			}
+			break;
+		}
+	}
 
 	/* check dphy spec: (unit: ns) */
 	if ((temp * dsi_phy_config.lp_tesc / 100) <= 100)
@@ -1658,45 +1829,6 @@ static void mipi_dsi_host_init(struct lcd_config_s *pconf)
 		pconf);
 }
 
-static void mipi_dsi_check_state(struct dsi_config_s *dconf,
-		unsigned char reg, int cnt)
-{
-	int ret = 0, i, len;
-	unsigned char *rd_data;
-	unsigned char payload[3] = {DT_GEN_RD_1, 1, 0x04};
-	char str[100];
-
-	LCDPR("%s\n", __func__);
-
-	rd_data = kmalloc_array(cnt, sizeof(unsigned char), GFP_KERNEL);
-	if (rd_data == NULL) {
-		LCDERR("%s: rd_data error\n", __func__);
-		return;
-	}
-
-	payload[2] = reg;
-	ret = dsi_read_single(payload, rd_data, cnt);
-	if (ret < 0) {
-		dconf->check_state = 0;
-		lcd_vcbus_setb(L_VCOM_VS_ADDR, 0, 12, 1);
-		kfree(rd_data);
-		return;
-	}
-
-	dconf->check_state = 1;
-	lcd_vcbus_setb(L_VCOM_VS_ADDR, 1, 12, 1);
-	len = sprintf(str, "read reg 0x%02x: ", reg);
-	for (i = 0; i < ret; i++) {
-		if (i == 0)
-			len += sprintf(str+len, "0x%02x", rd_data[i]);
-		else
-			len += sprintf(str+len, ",0x%02x", rd_data[i]);
-	}
-	pr_info("%s\n", str);
-
-	kfree(rd_data);
-}
-
 static void mipi_dsi_link_on(struct lcd_config_s *pconf)
 {
 	unsigned int op_mode_init, op_mode_disp;
@@ -1711,9 +1843,6 @@ static void mipi_dsi_link_on(struct lcd_config_s *pconf)
 	dconf = pconf->lcd_control.mipi_config;
 	op_mode_init = dconf->operation_mode_init;
 	op_mode_disp = dconf->operation_mode_display;
-
-	if (dconf->check_en)
-		mipi_dsi_check_state(dconf, dconf->check_reg, dconf->check_cnt);
 
 	if (dconf->dsi_init_on) {
 		dsi_write_cmd(dconf->dsi_init_on);
@@ -1747,33 +1876,35 @@ static void mipi_dsi_link_on(struct lcd_config_s *pconf)
 
 void mipi_dsi_link_off(struct lcd_config_s *pconf)
 {
+	struct dsi_config_s *dconf;
 #ifdef CONFIG_AMLOGIC_LCD_EXTERN
 	struct aml_lcd_extern_driver_s *lcd_ext;
-	int ext_index;
 #endif
 
 	if (lcd_debug_print_flag)
 		LCDPR("%s\n", __func__);
 
-	if (pconf->lcd_control.mipi_config->dsi_init_off) {
-		dsi_write_cmd(pconf->lcd_control.mipi_config->dsi_init_off);
-		LCDPR("dsi init off\n");
-	}
+	dconf = pconf->lcd_control.mipi_config;
 
 #ifdef CONFIG_AMLOGIC_LCD_EXTERN
-	ext_index = pconf->lcd_control.mipi_config->extern_init;
-	if (ext_index < LCD_EXTERN_INDEX_INVALID) {
-		lcd_ext = aml_lcd_extern_get_driver(ext_index);
+	if (dconf->extern_init < LCD_EXTERN_INDEX_INVALID) {
+		lcd_ext = aml_lcd_extern_get_driver(dconf->extern_init);
 		if (lcd_ext == NULL) {
 			LCDPR("no lcd_extern driver\n");
 		} else {
 			if (lcd_ext->config.table_init_off) {
 				dsi_write_cmd(lcd_ext->config.table_init_off);
-				LCDPR("[extern]%s dsi init off\n", lcd_ext->config.name);
+				LCDPR("[extern]%s dsi init off\n",
+					lcd_ext->config.name);
 			}
 		}
 	}
 #endif
+
+	if (dconf->dsi_init_off) {
+		dsi_write_cmd(dconf->dsi_init_off);
+		LCDPR("dsi init off\n");
+	}
 }
 
 void lcd_mipi_dsi_config_set(struct lcd_config_s *pconf)

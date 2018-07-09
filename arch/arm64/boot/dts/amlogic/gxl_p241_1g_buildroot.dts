@@ -63,12 +63,11 @@
 			reg = <0x0 0x05300000 0x0 0x2000000>;
 			no-map;
 		};
-		fb_reserved:linux,meson-fb {
+		ion_reserved:linux,ion-dev {
 			compatible = "shared-dma-pool";
 			reusable;
-			size = <0x0 0x1000000>;
+			size = <0x0 0x8000000>;
 			alignment = <0x0 0x400000>;
-			alloc-ranges = <0x0 0x3f000000 0x0 0x1000000>;
 		};
 		//don't put other dts in front of fb_reserved
 
@@ -87,11 +86,6 @@
 			/** 10x4074560=39M(0x27) support 10bit **/
 			size = <0x0 0x02400000>;
 			alignment = <0x0 0x400000>;
-		};
-
-		ion_reserved:linux,ion-dev {
-			compatible = "amlogic, idev-mem";
-			size = <0x0 0x1000>;
 		};
 
 		/*  vdin0 CMA pool */
@@ -113,9 +107,8 @@
 		};
 		/*  POST PROCESS MANAGER */
 		ppmgr_reserved:linux,ppmgr {
-			compatible = "amlogic, ppmgr_memory";
+			compatible = "shared-dma-pool";
 			size = <0x0 0x0>;
-			multi-use;
 		};
 
 		codec_mm_cma:linux,codec_mm_cma {
@@ -1222,7 +1215,7 @@
 		compatible = "amlogic, unifykey";
 		status = "ok";
 
-		unifykey-num = <14>;
+		unifykey-num = <15>;
 		unifykey-index-0 = <&keysn_0>;
 		unifykey-index-1 = <&keysn_1>;
 		unifykey-index-2 = <&keysn_2>;
@@ -1237,6 +1230,7 @@
 		unifykey-index-11= <&keysn_11>;
 		unifykey-index-12= <&keysn_12>;
 		unifykey-index-13= <&keysn_13>;
+		unifykey-index-14= <&keysn_14>;
 
 		keysn_0: key_0{
 			key-name = "usid";
@@ -1308,6 +1302,11 @@
 		};
 		keysn_13:key_13{
 			key-name = "prprivkeybox";// PlayReady
+			key-device = "secure";
+			key-permit = "read","write","del";
+		};
+		keysn_14:key_14{
+			key-name = "attestationkeybox";// attestation key
 			key-device = "secure";
 			key-permit = "read","write","del";
 		};

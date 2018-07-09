@@ -18,10 +18,7 @@
 #ifndef __AM_DRM_LCD_H
 #define __AM_DRM_LCD_H
 
-#include "meson_drv.h"
-
-extern int am_drm_lcd_register(struct drm_device *drm);
-extern int am_drm_lcd_unregister(struct drm_device *drm);
+#include "am_meson_drv.h"
 
 #endif
 

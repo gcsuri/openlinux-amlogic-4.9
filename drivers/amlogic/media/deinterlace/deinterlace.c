@@ -1459,6 +1459,10 @@ static unsigned char is_bypass(vframe_t *vf_in)
 		/*backup vtype,set type as progressive*/
 		vtype = vf_in->type;
 		vf_in->type &= (~VIDTYPE_TYPEMASK);
+		vf_in->type &= (~VIDTYPE_VIU_NV21);
+		vf_in->type |= VIDTYPE_VIU_SINGLE_PLANE;
+		vf_in->type |= VIDTYPE_VIU_FIELD;
+		vf_in->type |= VIDTYPE_PRE_INTERLACE;
 		vf_in->type |= VIDTYPE_VIU_422;
 		ret = get_current_vscale_skip_count(vf_in);
 		di_vscale_skip_count = (ret&0xff);
@@ -2027,7 +2031,7 @@ static int di_init_buf(int width, int height, unsigned char prog_flag)
 				di_buf->canvas_config_flag = 2;
 			}
 			di_buf->index = i;
-					di_buf->vframe = &(vframe_local[i]);
+			di_buf->vframe = &(vframe_local[i]);
 			di_buf->vframe->private_data = di_buf;
 			di_buf->vframe->canvas0Addr = di_buf->nr_canvas_idx;
 			di_buf->vframe->canvas1Addr = di_buf->nr_canvas_idx;
@@ -3277,12 +3281,10 @@ jiffies_to_msecs(jiffies_64 - vframe->ready_jiffies64));
 							is_meson_gxl_cpu() ||
 							is_meson_gxm_cpu());
 		width_roundup = bit10_pack_patch ? 16 : width_roundup;
-#if 0 //test for even width&height
 		if (di_force_bit_mode == 10)
 			force_width = roundup(vframe->width, width_roundup);
 		else
 			force_width = 0;
-#endif
 		di_pre_stru.source_trans_fmt = vframe->trans_fmt;
 		di_pre_stru.left_right = di_pre_stru.left_right ? 0 : 1;
 		di_pre_stru.invert_flag =
@@ -3546,11 +3548,11 @@ jiffies_to_msecs(jiffies_64 - vframe->ready_jiffies64));
 					pr_err("DI:no free in_buffer for progressive skip.\n");
 					return 0;
 				}
+				queue_out(di_buf_tmp);
 				di_buf_tmp->vframe->private_data
 					= di_buf_tmp;
 				di_buf_tmp->seq = di_pre_stru.in_seq;
 				di_pre_stru.in_seq++;
-				queue_out(di_buf_tmp);
 				vframe_in[di_buf_tmp->index] = vframe;
 				memcpy(
 					di_buf_tmp->vframe, vframe,
@@ -6109,6 +6111,8 @@ static int di_task_handle(void *data)
 		return -1;
 	while (1) {
 		ret = down_interruptible(&di_sema);
+		if (ret != 0)
+			continue;
 		if (active_flag) {
 			if ((di_pre_stru.unreg_req_flag ||
 				di_pre_stru.force_unreg_req_flag ||
@@ -7636,9 +7640,9 @@ module_param_named(check_start_drop_prog, check_start_drop_prog, bool, 0664);
 module_param_named(overturn, overturn, bool, 0664);
 module_param_named(queue_print_flag, queue_print_flag, int, 0664);
 module_param_named(full_422_pack, full_422_pack, bool, 0644);
+module_param_named(cma_print, cma_print, bool, 0644);
 #ifdef DEBUG_SUPPORT
 module_param_named(pulldown_enable, pulldown_enable, bool, 0644);
-module_param_named(cma_print, cma_print, bool, 0644);
 #ifdef RUN_DI_PROCESS_IN_IRQ
 module_param_named(input2pre, input2pre, uint, 0664);
 module_param_named(input2pre_buf_miss_count, input2pre_buf_miss_count,

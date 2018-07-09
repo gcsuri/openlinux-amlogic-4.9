@@ -142,6 +142,30 @@
 		};
 	};
 
+	gpioleds {
+		compatible = "gpio-leds";
+		status = "okay";
+
+		net_red {
+			label="net_red";
+			gpios=<&gpio GPIOA_14 GPIO_ACTIVE_LOW>;
+			default-state ="on";
+		};
+
+		net_green {
+			label="net_green";
+			gpios=<&gpio GPIOA_15 GPIO_ACTIVE_HIGH>;
+			default-state ="on";
+		};
+
+		remote_led {
+			label = "remote_led";
+			gpios = <&gpio_ao GPIOAO_10 GPIO_ACTIVE_LOW>;
+			default-state = "off";
+			linux,default-trigger = "rc_feedback";
+		};
+	};
+
 	cvbsout {
 		compatible = "amlogic, cvbsout-g12a";
 		dev_name = "cvbsout";
@@ -252,7 +276,7 @@
 	unifykey{
 		compatible = "amlogic, unifykey";
 		status = "ok";
-		unifykey-num = <14>;
+		unifykey-num = <15>;
 		unifykey-index-0 = <&keysn_0>;
 		unifykey-index-1 = <&keysn_1>;
 		unifykey-index-2 = <&keysn_2>;
@@ -267,6 +291,7 @@
 		unifykey-index-11= <&keysn_11>;
 		unifykey-index-12= <&keysn_12>;
 		unifykey-index-13= <&keysn_13>;
+		unifykey-index-14= <&keysn_14>;
 
 		keysn_0: key_0{
 			key-name = "usid";
@@ -338,6 +363,11 @@
 		};
 		keysn_13:key_13{
 			key-name = "prprivkeybox";// PlayReady
+			key-device = "secure";
+			key-permit = "read","write","del";
+		};
+		keysn_14:key_14{
+			key-name = "attestationkeybox";// attestation key
 			key-device = "secure";
 			key-permit = "read","write","del";
 		};
@@ -514,7 +544,7 @@
 			};
 			tdmbcodec: codec {
 				sound-dai = <&dummy_codec &dummy_codec
-				&amlogic_codec &ad82584f_62>;
+					&amlogic_codec>;
 			};
 		};
 
@@ -722,7 +752,7 @@
 };
 
 &i2c3 {
-	status = "okay";
+	status = "disabled";
 	pinctrl-names="default";
 	pinctrl-0=<&i2c3_master_pins2>;
 	clock-frequency = <100000>; /* default 100k */
@@ -732,7 +762,7 @@
 		compatible = "ESMT, ad82584f";
 		#sound-dai-cells = <0>;
 		reg = <0x31>;
-		status = "okay";
+		status = "disabled";
 		reset_pin = <&gpio GPIOA_5 0>;
 	};
 
@@ -834,7 +864,7 @@
 
 		interrupt-names = "irq_spdifin";
 		pinctrl-names = "spdif_pins";
-		pinctrl-0 = <&spdifout &spdifin>;
+		pinctrl-0 = <&spdifout>;
 		status = "okay";
 	};
 	aml_spdif_b: spdif_b {
@@ -1020,14 +1050,12 @@
 	};
 
 	/* GPIOH_4 */
-	/*
-	 * spdifout: spdifout {
-	 *	mux {
-	 *		groups = "spdif_out_h";
-	 *		function = "spdif_out";
-	 *	};
-	 *};
-	 */
+	spdifout: spdifout {
+		mux {
+			groups = "spdif_out_h";
+			function = "spdif_out";
+		};
+	};
 
 	pdmin: pdmin {
 		mux { /* gpioa_5, gpioa_6, gpioa_7, gpioa_8, gpioa_9*/
@@ -1043,12 +1071,13 @@
 
 }; /* end of pinctrl_periphs */
 &pinctrl_aobus {
-	spdifout: spdifout {
-		mux { /* gpiao_10 */
-			groups = "spdif_out_ao";
-			function = "spdif_out_ao";
-		};
-	};
+	/*gpiao_10*/
+	/*spdifout: spdifout {			  */
+	/*	mux {						  */
+	/*		groups = "spdif_out_ao";  */
+	/*		function = "spdif_out_ao";*/
+	/*	};							  */
+	/*};							  */
 };  /* end of pinctrl_aobus */
 
 &audio_data {
@@ -1131,28 +1160,53 @@
 			 "MMC_CAP_HW_RESET",
 			 "MMC_CAP_ERASE",
 			 "MMC_CAP_CMD23";
-		/* caps2 = "MMC_CAP2_HS200", "MMC_CAP2_HS400";*/
+		caps2 = "MMC_CAP2_HS200";
+		/* "MMC_CAP2_HS400";*/
 		f_min = <400000>;
-		f_max = <40000000>;
+		f_max = <200000000>;
 	};
 };
 
-&sd_emmc_b {
-	status = "okay";
+&sd_emmc_b1 {
+	status = "disabled";
 	sd {
 		caps = "MMC_CAP_4_BIT_DATA",
 			 "MMC_CAP_MMC_HIGHSPEED",
+			 "MMC_CAP_SD_HIGHSPEED";
+		f_min = <400000>;
+		f_max = <50000000>;
+	};
+};
+
+&sd_emmc_b2 {
+	status = "disabled";
+	sd {
+		caps = "MMC_CAP_4_BIT_DATA",
+			 "MMC_CAP_MMC_HIGHSPEED",
+			 "MMC_CAP_SD_HIGHSPEED";
+		f_min = <400000>;
+		f_max = <50000000>;
+	};
+
+	sdio {
+		caps = "MMC_CAP_4_BIT_DATA",
+			 "MMC_CAP_MMC_HIGHSPEED",
 			 "MMC_CAP_SD_HIGHSPEED",
+			 "MMC_CAP_NONREMOVABLE",
 			 "MMC_CAP_UHS_SDR12",
 			 "MMC_CAP_UHS_SDR25",
-			 "MMC_CAP_UHS_SDR50";
+			 "MMC_CAP_UHS_SDR50",
+			 "MMC_CAP_UHS_SDR104",
+			 "MMC_PM_KEEP_POWER",
+			 "MMC_CAP_SDIO_IRQ";
+
 		f_min = <400000>;
 		f_max = <200000000>;
 	};
 };
 
 &sd_emmc_a {
-	status = "okay";
+	status = "disabled";
 	sdio {
 		caps = "MMC_CAP_4_BIT_DATA",
 			 "MMC_CAP_MMC_HIGHSPEED",

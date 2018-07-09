@@ -118,7 +118,7 @@ unsigned int av1_plugin_state;
 unsigned int av2_plugin_state;
 #endif
 
-#ifdef CONFIG_AM_DVB
+#ifdef CONFIG_AMLOGIC_ATV_DEMOD
 static struct tvafe_info_s *g_tvafe_info;
 #endif
 
@@ -200,7 +200,7 @@ void tvafe_cma_release(struct tvafe_dev_s *devp)
 }
 #endif
 
-#ifdef CONFIG_AM_DVB
+#ifdef CONFIG_AMLOGIC_ATV_DEMOD
 static int tvafe_get_v_fmt(void)
 {
 	int fmt = 0;
@@ -295,7 +295,7 @@ int tvafe_dec_open(struct tvin_frontend_s *fe, enum tvin_port_e port)
 	/* set the flag to enabble ioctl access */
 	devp->flags |= TVAFE_FLAG_DEV_OPENED;
 	tvafe_clk_status = true;
-#ifdef CONFIG_AM_DVB
+#ifdef CONFIG_AMLOGIC_ATV_DEMOD
 	g_tvafe_info = tvafe;
 	/* register aml_fe hook for atv search */
 	aml_fe_hook_cvd(tvafe_cvd2_get_atv_format, tvafe_cvd2_get_hv_lock,
@@ -346,6 +346,15 @@ void tvafe_dec_start(struct tvin_frontend_s *fe, enum tvin_sig_fmt_e fmt)
 	if ((fmt == TVIN_SIG_FMT_CVBS_NTSC_443) &&
 		((port == TVIN_PORT_CVBS1) || (port == TVIN_PORT_CVBS2)))
 		W_APB_REG(CVD2_H_LOOP_MAXSTATE, 0x9);
+
+#ifdef CONFIG_AMLOGIC_MEDIA_TVIN_AVDETECT
+	if (tvafe_cpu_type() == CPU_TYPE_TXLX) {
+		if (port == TVIN_PORT_CVBS1)
+			tvafe_avin_detect_ch1_anlog_enable(0);
+		else if (port == TVIN_PORT_CVBS2)
+			tvafe_avin_detect_ch2_anlog_enable(0);
+	}
+#endif
 
 	tvafe->parm.info.fmt = fmt;
 	tvafe->parm.info.status = TVIN_SIG_STATUS_STABLE;
@@ -404,6 +413,15 @@ void tvafe_dec_stop(struct tvin_frontend_s *fe, enum tvin_port_e port)
 #endif
 		tvafe_cvd2_set_default_de(&tvafe->cvd2);
 	}
+#ifdef CONFIG_AMLOGIC_MEDIA_TVIN_AVDETECT
+	if (tvafe_cpu_type() == CPU_TYPE_TXLX) {
+		if (port == TVIN_PORT_CVBS1)
+			tvafe_avin_detect_ch1_anlog_enable(1);
+		else if (port == TVIN_PORT_CVBS2)
+			tvafe_avin_detect_ch2_anlog_enable(1);
+	}
+#endif
+
 	devp->flags &= (~TVAFE_FLAG_DEV_STARTED);
 
 	tvafe_pr_info("%s stop port:0x%x ok.\n", __func__, port);
@@ -439,7 +457,7 @@ void tvafe_dec_close(struct tvin_frontend_s *fe)
 	}
 	tvafe_clk_status = false;
 	/*del_timer_sync(&devp->timer);*/
-#ifdef CONFIG_AM_DVB
+#ifdef CONFIG_AMLOGIC_ATV_DEMOD
 	g_tvafe_info = NULL;
 	/* register aml_fe hook for atv search */
 	aml_fe_hook_cvd(NULL, NULL, NULL);
@@ -1129,7 +1147,7 @@ static int tvafe_drv_probe(struct platform_device *pdev)
 	}
 
 	s_tvafe_data = (struct meson_tvafe_data *)match->data;
-	tvafe_pr_info("%s£¬cpu_id:%d,name:%s\n", __func__,
+	tvafe_pr_info("%s:cpu_id:%d,name:%s\n", __func__,
 		s_tvafe_data->cpu_id, s_tvafe_data->name);
 
 	tvafe_clktree_probe(&pdev->dev);

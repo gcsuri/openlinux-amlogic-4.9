@@ -190,13 +190,34 @@ enum mmc_chip_e {
 	MMC_CHIP_G12A = 0x28,
 };
 
+struct mmc_phase {
+	unsigned int core_phase;
+	unsigned int tx_phase;
+	unsigned int rx_phase;
+	unsigned int tx_delay;
+};
+
+struct para_e {
+	struct mmc_phase init;
+	struct mmc_phase hs;
+	struct mmc_phase ddr;
+	struct mmc_phase hs2;
+	struct mmc_phase hs4;
+	struct mmc_phase sd_hs;
+	struct mmc_phase sdr104;
+};
+
 struct meson_mmc_data {
 	enum mmc_chip_e chip_type;
+	unsigned int port_a_base;
+	unsigned int port_b_base;
+	unsigned int port_c_base;
 	unsigned int pinmux_base;
 	unsigned int clksrc_base;
 	unsigned int ds_pin_poll;
 	unsigned int ds_pin_poll_en;
 	unsigned int ds_pin_poll_bit;
+	struct para_e sdmmc;
 };
 
 struct amlsd_host;
@@ -218,22 +239,29 @@ struct amlsd_platform {
 #ifdef CONFIG_AMLOGIC_M8B_MMC
 	unsigned int width;
 	unsigned int tune_phase;	/* store tuning result */
-	struct delayed_work cd_detect;
 #endif
+	struct delayed_work cd_detect;
 	unsigned int caps;
 	unsigned int caps2;
 	unsigned int card_capacity;
 	unsigned int tx_phase;
 	unsigned int tx_delay;
+	unsigned int co_phase;
 	unsigned int f_min;
 	unsigned int f_max;
 	unsigned int clkc;
 	unsigned int clk2;
 	unsigned int clkc_w;
 	unsigned int ctrl;
+	unsigned int adj;
+	unsigned int dly1;
+	unsigned int dly2;
+	unsigned int intf3;
 	unsigned int clock;
 	/* signalling voltage (1.8V or 3.3V) */
 	unsigned char signal_voltage;
+	int	bus_width;
+	int	bl_len;
 
 	unsigned int low_burst;
 	struct mutex in_out_lock;
@@ -243,6 +271,7 @@ struct amlsd_platform {
 	unsigned int gpio_cd_sta;
 	unsigned int gpio_power;
 	unsigned int power_level;
+
 	unsigned int auto_clk_close;
 	unsigned int vol_switch;
 	unsigned int vol_switch_18;
@@ -314,8 +343,8 @@ struct amlsd_platform {
 	unsigned int nr_parts;
 
 	struct resource *resource;
-	void (*xfer_pre)(struct mmc_host *mmc);
-	void (*xfer_post)(struct mmc_host *mmc);
+	void (*xfer_pre)(struct amlsd_platform *pdata);
+	void (*xfer_post)(struct amlsd_platform *pdata);
 
 	int (*port_init)(struct amlsd_platform *pdata);
 	int (*cd)(struct amlsd_platform *pdata);
@@ -383,6 +412,9 @@ struct amlsd_host {
 	char is_tunning;
 	char is_timming;
 	char tuning_mode;
+	char cur_dev[32];
+	unsigned int val_f;
+	unsigned int is_sduart;
 	unsigned int irq;
 	unsigned int irq_in;
 	unsigned int irq_out;
@@ -392,7 +424,6 @@ struct amlsd_host {
 	int	sdio_irqen;
 	unsigned int error_bak;
 	struct delayed_work	timeout;
-	struct delayed_work	cd_work;
 	struct class debug;
 
 	unsigned int send;
@@ -425,11 +456,11 @@ struct amlsd_host {
 	struct  mmc_request	*mrq2;
 	spinlock_t	mrq_lock;
 	struct mutex	pinmux_lock;
+	struct completion   drv_completion;
 	int			cmd_is_stop;
 	enum aml_mmc_waitfor	xfer_step;
 	enum aml_mmc_waitfor	xfer_step_prev;
 
-	int			bus_width;
 	int	 port;
 	int	 locked;
 	bool	is_gated;

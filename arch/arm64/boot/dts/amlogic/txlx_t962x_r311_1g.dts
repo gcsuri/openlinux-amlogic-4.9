@@ -583,16 +583,20 @@
 		interrupt-names = "mailbox_2";
 	};
 
-	aml_atv_demod {
-		compatible = "amlogic, aml_atv_demod";
-		dev_name = "aml_atv_demod";
-		status = "disabled";
+	aml_atvdemod {
+		compatible = "amlogic, aml_atvdemod";
+		dev_name = "aml_atvdemod";
+		status = "okay";
+		tuner = "mxl661_tuner";
+		tuner_i2c_ada_id = <&i2c1>;
+		tuner_i2c_addr = <0x60>;
+		btsc_sap_mode = <1>;
 		////pinctrl-names="atvdemod_agc";
 		////pinctrl-0=<&atvdemod_agc>;
 		reg = <0x0 0xff640000 0x0 0x2000
-			   0x0 0xff648000 0x0 0x2000>;
-		/* default:0x88188832;r840 on haier:0x48188832 */
+				0x0 0xff648000 0x0 0x2000>;
 		reg_23cf = <0x88188832>;
+		/*default:0x88188832;r840 on haier:0x48188832*/
 	};
 
 	bt-dev {
@@ -677,7 +681,6 @@
 			caps2 = "MMC_CAP2_HS200", "MMC_CAP2_HS400";
 			f_min = <400000>;
 			f_max = <200000000>;
-			tx_delay = <6>;
 			max_req_size = <0x20000>; /**128KB*/
 			gpio_dat3 = <&gpio BOOT_3 GPIO_ACTIVE_HIGH>;
 			hw_reset = <&gpio BOOT_9 GPIO_ACTIVE_HIGH>;
@@ -934,7 +937,7 @@
 		vendor_id = <0x000000>;
 		product_desc = "TXLX"; /* Max Chars: 16    */
 		cec_osd_string = "AML_TV"; /* Max Chars: 14    */
-		port_num = <3>;
+		port_num = <4>;
 		ee_cec;
 		arc_port_mask = <0x2>;
 		interrupts = <0 205 1>;
@@ -1378,6 +1381,13 @@
 		drc_enable = <0>;
 		status = "okay";
 	};
+};
+
+&i2c1 {
+	status = "okay";
+	clock-frequency = <300000>;
+	pinctrl-names="default";
+	pinctrl-0=<&i2c1_dv_pins>;
 };
 
 &pinctrl_periphs {

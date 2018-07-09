@@ -103,7 +103,7 @@ obj-$(CONFIG_AMLOGIC_IRBLASTER) += irblaster/
 
 obj-$(CONFIG_AMLOGIC_IIO)       += iio/
 
-obj-$(CONFIG_AMLOGIC_DDR_WINDOW_TOOL)       += ddr_window/
+obj-$(CONFIG_AMLOGIC_DDR_TOOL)       += ddr_tool/
 
 obj-$(CONFIG_DRM_MESON)	+= drm/
 
@@ -116,3 +116,5 @@ obj-$(CONFIG_AMLOGIC_MEMORY_EXTEND) += memory_ext/
 obj-$(CONFIG_AMLOGIC_LEDRING) += ledring/
 
 obj-$(CONFIG_AMLOGIC_GPIO_IRQ) += irqchip/
+
+obj-$(CONFIG_AMLOGIC_ATV_DEMOD) += atv_demod/
